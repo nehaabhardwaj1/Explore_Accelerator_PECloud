@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "explore-accelerator": {
+      "command": "python",
+      "args": ["mcp_server.py"],
+      "env": {}
+    }
+  }
+}

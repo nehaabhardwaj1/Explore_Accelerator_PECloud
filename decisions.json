@@ -1,0 +1,28 @@
+[
+  {
+    "kddId": "1P0-KDD-001",
+    "scopeItemId": "1P0",
+    "scopeItemName": "Event-Based Revenue Recognition – Project-Based Services – IFRS",
+    "question": "Will Manage Revenue Accounting Contracts app be used to configure event-based POC methods for IFRS 15 project milestones?",
+    "decision": "gfhgf",
+    "rationale": "Defines IFRS 15 POC methodology for project-based services revenue recognition",
+    "fitGap": "Gap",
+    "complexity": "Medium",
+    "client": "hi",
+    "project": "Yellow",
+    "savedAt": "2026-09-28T13:02:00.799973Z"
+  },
+  {
+    "kddId": "1P0-KDD-001",
+    "scopeItemId": "1P0",
+    "scopeItemName": "Event-Based Revenue Recognition – Project-Based Services – IFRS",
+    "question": "Will Manage Revenue Accounting Contracts app be used to configure event-based POC methods for IFRS 15 project milestones?",
+    "decision": "Configure custom event types and milestone triggers using Manage Revenue Recognition Event Types (To be confirmed in workshop) combined with project milestone integration from scope item 1MK (Project-Based Services).",
+    "rationale": "Defines IFRS 15 POC methodology for project-based services revenue recognition",
+    "fitGap": "Gap",
+    "complexity": "Low",
+    "client": "hi",
+    "project": "Yellow",
+    "savedAt": "2026-09-28T12:26:21.194138Z"
+  }
+]

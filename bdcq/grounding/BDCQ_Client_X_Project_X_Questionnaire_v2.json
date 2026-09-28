@@ -1,0 +1,160 @@
+{
+  "origName": "BDCQ_Client_X_Project_X_Questionnaire_v2.xlsx",
+  "uploadedAt": "2026-09-22T14:39:27.897Z",
+  "totalRows": 42,
+  "sheets": [
+    {
+      "source": "BDCQ_Client_X_Project_X_Questionnaire_v2.xlsx",
+      "sheet": "Template overview",
+      "columns": [
+        "Business Driven Requirements Questionnaire - << Workstream >>"
+      ],
+      "rows": [
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        },
+        {
+          "Business Driven Requirements Questionnaire - << Workstream >>": ""
+        }
+      ]
+    },
+    {
+      "source": "BDCQ_Client_X_Project_X_Questionnaire_v2.xlsx",
+      "sheet": "Questionnaire",
+      "columns": [
+        "Business Driven Configuration Questionnaire - Professional Services"
+      ],
+      "rows": [
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Industry"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        },
+        {
+          "Business Driven Configuration Questionnaire - Professional Services": "Professional Services"
+        }
+      ]
+    },
+    {
+      "source": "BDCQ_Client_X_Project_X_Questionnaire_v2.xlsx",
+      "sheet": "Open points",
+      "columns": [
+        "Key Instructions:"
+      ],
+      "rows": [
+        {
+          "Key Instructions:": "1. Provide your confirmation/ remarks in column M \"Country BPO Remarks\" if you agree with the approach aligned in column K \"Client BPO/SA/TA comments\" and/or remarks from Accenture in column L \"Accenture remarks\"\r\n2. If you disagree, please provide your feedback in column M \"Country BPO Remarks\" for further discussion. \r\n3. You are encoraged to adapt the global design and call out your concerns only if the requirement is legal requirement. Share the supporting documents if it is a legal requirement."
+        },
+        {
+          "Key Instructions:": "S.No"
+        }
+      ]
+    }
+  ]
+}
