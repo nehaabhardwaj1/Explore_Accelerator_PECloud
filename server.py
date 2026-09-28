@@ -84,8 +84,9 @@ async def api_status():
     items      = cat.get("items", [])
     version    = str(cat.get("version", ""))
     outdated   = is_catalog_outdated(version)
-    cache      = load_cache()
-    cache_ready = bool(cache and cache.get("items"))
+    cache        = load_cache()
+    cache_ready  = bool(cache and cache.get("items"))
+    output_count = sum(1 for f in OUTPUT_DIR.iterdir() if f.is_file() and f.suffix in (".xlsx", ".pptx"))
     return {
         "ok":              True,
         "catalogVersion":  version or "—",
@@ -93,8 +94,44 @@ async def api_status():
         "catalogOutdated": outdated,
         "expectedRelease": expected_release(),
         "cacheReady":      cache_ready,
+        "outputCount":     output_count,
         "catalogChanged":  False,
     }
+
+
+@app.post("/api/cache/rebuild")
+async def rebuild_cache():
+    from collections import defaultdict
+    from routes.deps import CACHE_PATH, load_catalog
+    cat         = load_catalog()
+    cache_items: dict = {}
+    total_kdds  = 0
+    files       = sorted(OUTPUT_DIR.glob("kdd-data-*.json"), key=lambda f: f.stat().st_mtime)
+    for fp in files:
+        try:
+            data   = json.loads(fp.read_text("utf-8"))
+            rows   = data.get("rows", [])
+            meta   = data.get("meta", {})
+            ov_map = {ov["id"]: ov.get("overview", "") for ov in meta.get("overviews", [])}
+            by_sid: dict = defaultdict(list)
+            for row in rows:
+                sid = row.get("scopeItemId", "")
+                if sid:
+                    by_sid[sid].append(row)
+            for sid, scope_rows in by_sid.items():
+                cache_items[sid] = {
+                    "rows":     scope_rows,
+                    "overview": ov_map.get(sid, ""),
+                    "cachedAt": datetime.utcnow().isoformat() + "Z",
+                }
+        except Exception:
+            continue
+    total_kdds = sum(len(v["rows"]) for v in cache_items.values())
+    CACHE_PATH.write_text(
+        json.dumps({"items": cache_items, "version": str(cat.get("version", ""))}, indent=2, ensure_ascii=False),
+        "utf-8",
+    )
+    return {"ok": True, "cachedItems": len(cache_items), "totalKDDs": total_kdds}
 
 
 @app.get("/api/decisions/clients")
@@ -149,6 +186,76 @@ async def save_decision(request: Request):
     return {"ok": True, "count": len(decisions)}
 
 
+@app.post("/api/decisions/sync")
+async def sync_decisions():
+    """Scan the latest KDD session for Approved rows and bulk-save them to decisions.json."""
+    # Find the most recently modified kdd-data file
+    files = sorted(OUTPUT_DIR.glob("kdd-data-*.json"),
+                   key=lambda f: f.stat().st_mtime, reverse=True)
+    if not files:
+        return {"ok": False, "error": "No KDD session found. Generate a KDD log first."}
+
+    data  = json.loads(files[0].read_text("utf-8"))
+    rows  = data.get("rows", [])
+    meta  = data.get("meta", {})
+    client  = meta.get("client", "")
+    project = meta.get("project", "")
+
+    approved = [r for r in rows
+                if r.get("signOffStatus") == "Approved"
+                and (r.get("decisionMade") or "").strip()]
+
+    if not approved:
+        return {"ok": True, "synced": 0,
+                "message": "No approved decisions with decision text found in the latest session."}
+
+    existing   = load_decisions()
+    existing_ids = {d.get("kddId") for d in existing}
+    now        = datetime.utcnow().isoformat() + "Z"
+    new_entries = []
+    for r in approved:
+        if r.get("kddId") in existing_ids:
+            continue
+        new_entries.append({
+            "kddId":        r.get("kddId"),
+            "scopeItemId":  r.get("scopeItemId"),
+            "scopeItemName":r.get("scopeItemName"),
+            "question":     r.get("designQuestion"),
+            "decision":     r.get("decisionMade"),
+            "rationale":    r.get("rationale"),
+            "fitGap":       r.get("fitGap"),
+            "complexity":   r.get("complexity"),
+            "client":       client,
+            "project":      project,
+            "savedAt":      now,
+        })
+
+    if new_entries:
+        save_decisions((new_entries + existing)[:500])
+
+    client_slug = re.sub(r"[^\w]", "-", client.lower()).strip("-") or ""
+    return {
+        "ok":        True,
+        "synced":    len(new_entries),
+        "skipped":   len(approved) - len(new_entries),
+        "clientSlug": client_slug,
+        "message":   f"Synced {len(new_entries)} new approved decision(s) from '{client} · {project}'."
+                     if new_entries else
+                     f"All {len(approved)} approved decision(s) were already in the library.",
+    }
+
+
+@app.delete("/api/decisions")
+async def clear_decisions(clientSlug: str = ""):
+    if clientSlug:
+        keep = [d for d in load_decisions()
+                if re.sub(r"[^\w]", "-", (d.get("client") or "").lower()).strip("-") != clientSlug]
+    else:
+        keep = []
+    save_decisions(keep)
+    return {"ok": True, "deleted": len(load_decisions()) - len(keep) if not clientSlug else None}
+
+
 @app.delete("/api/decisions/{decision_id}")
 async def delete_decision(decision_id: str):
     save_decisions([d for d in load_decisions() if d.get("id") != decision_id])
@@ -156,19 +263,56 @@ async def delete_decision(decision_id: str):
 
 
 # ── Projects store ────────────────────────────────────────────────────────────
+# Projects are derived from kdd-data-*.json files in output/ — no separate
+# projects.json needed.  The slug IS the session_id used by the editor.
 
 @app.get("/api/projects")
 async def get_projects():
-    return {"ok": True, "projects": load_projects()}
+    files = sorted(OUTPUT_DIR.glob("kdd-data-*.json"),
+                   key=lambda f: f.stat().st_mtime, reverse=True)
+    projects = []
+    for f in files:
+        try:
+            data = json.loads(f.read_text("utf-8"))
+            meta = data.get("meta", {})
+            slug = f.stem.replace("kdd-data-", "", 1)
+            projects.append({
+                "slug":    slug,
+                "client":  meta.get("client", ""),
+                "project": meta.get("project", ""),
+                "rows":    len(data.get("rows", [])),
+                "savedAt": meta.get("lastEditedAt") or meta.get("generatedAt", ""),
+            })
+        except Exception:
+            continue
+    return {"ok": True, "projects": projects}
 
 
 @app.post("/api/projects")
 async def save_project(request: Request):
-    body     = await request.json()
-    projects = load_projects()
-    body["savedAt"] = datetime.utcnow().isoformat() + "Z"
-    projects.insert(0, body)
-    save_projects(projects[:100])
+    # No-op — projects are now auto-derived from kdd-data files.
+    return {"ok": True}
+
+
+@app.post("/api/projects/load")
+async def load_project(request: Request):
+    body = await request.json()
+    slug = body.get("slug", "")
+    fp   = OUTPUT_DIR / f"kdd-data-{slug}.json"
+    if not fp.exists():
+        return {"ok": False, "error": f"Project '{slug}' not found"}
+    data = json.loads(fp.read_text("utf-8"))
+    meta = data.get("meta", {})
+    return {"ok": True, "sessionId": slug,
+            "client": meta.get("client", ""), "project": meta.get("project", "")}
+
+
+@app.delete("/api/projects/{slug}")
+async def delete_project(slug: str):
+    safe = re.sub(r"[^\w\-]", "_", slug)
+    fp   = OUTPUT_DIR / f"kdd-data-{safe}.json"
+    if fp.exists():
+        fp.unlink()
     return {"ok": True}
 
 
@@ -177,14 +321,24 @@ async def save_project(request: Request):
 @app.get("/api/output")
 async def list_output():
     files = sorted(
-        (f for f in OUTPUT_DIR.iterdir() if f.suffix in (".xlsx", ".pptx")),
+        (f for f in OUTPUT_DIR.iterdir() if f.is_file() and f.suffix in (".xlsx", ".pptx")),
         key=lambda f: f.stat().st_mtime, reverse=True,
     )
-    return {"ok": True, "files": [
-        {"name": f.name, "size": f.stat().st_size,
+    return {"ok": True, "folder": str(OUTPUT_DIR), "files": [
+        {"name": f.name, "size": f.stat().st_size, "type": f.suffix[1:].upper(),
          "modified": datetime.utcfromtimestamp(f.stat().st_mtime).isoformat() + "Z"}
-        for f in files[:20]
+        for f in files[:50]
     ]}
+
+
+@app.delete("/api/output")
+async def delete_all_output():
+    deleted = 0
+    for fp in OUTPUT_DIR.iterdir():
+        if fp.is_file() and fp.suffix in (".xlsx", ".pptx"):
+            fp.unlink()
+            deleted += 1
+    return {"ok": True, "deleted": deleted}
 
 
 @app.get("/api/output/download/{filename}")

@@ -20,6 +20,15 @@ bdcq/bdcq-questions.json
 .env
 *.env
 
+# Generated runtime files
+kdd-cache.json
+decisions.json
+projects.json
+scope-catalog.backup-*.json
+
+# BDCQ grounding uploads (per-project data)
+bdcq/grounding/
+
 # OS
 .DS_Store
 Thumbs.db

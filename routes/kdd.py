@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .deps import (
-    append_run_log, get_past_decisions, kdd_data_path, load_cache, load_catalog,
+    CACHE_PATH, append_run_log, get_past_decisions, kdd_data_path, load_cache, load_catalog,
     slugify, spawn_claude, sse,
 )
 
@@ -92,6 +92,30 @@ async def kdd_generate(request: Request):
         session_id = f"{slugify(client)}-{slugify(project)}" if (client or project) else "default"
         json_path  = kdd_data_path(session_id)
         json_path.write_text(json.dumps({"rows": all_rows, "meta": meta, "sessionId": session_id}, indent=2, ensure_ascii=False), "utf-8")
+
+        # Update kdd-cache.json so cacheReady=true on the status endpoint
+        try:
+            from collections import defaultdict
+            existing_cache = json.loads(CACHE_PATH.read_text("utf-8")) if CACHE_PATH.exists() else {"items": {}}
+            cache_items    = existing_cache.get("items", {})
+            rows_by_scope: dict = defaultdict(list)
+            ov_by_scope    = {ov["id"]: ov.get("overview", "") for ov in overviews}
+            for row in all_rows:
+                sid = row.get("scopeItemId", "")
+                if sid:
+                    rows_by_scope[sid].append(row)
+            for sid, scope_rows in rows_by_scope.items():
+                cache_items[sid] = {
+                    "rows":     scope_rows,
+                    "overview": ov_by_scope.get(sid, ""),
+                    "cachedAt": datetime.utcnow().isoformat() + "Z",
+                }
+            CACHE_PATH.write_text(
+                json.dumps({"items": cache_items, "version": str(cat.get("version", ""))}, indent=2, ensure_ascii=False),
+                "utf-8",
+            )
+        except Exception:
+            pass  # cache write is non-fatal
 
         try:
             out_path    = build_excel(all_rows, meta)

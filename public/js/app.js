@@ -951,17 +951,28 @@ async function pagReference() {
 // ── OUTPUT page ───────────────────────────────────────────────────────────────
 async function pagOutput() {
   const data = await api.get("/api/output");
-  const files  = data.files  || [];
+  const files  = Array.isArray(data.files) ? data.files : [];
   const folder = data.folder || "output/";
+
+  const typeTag = t => {
+    const colour = t === "XLSX"
+      ? "background:#d1fae5;color:#065f46;border:1px solid #a7f3d0"
+      : "background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd";
+    return `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;${colour}">${t}</span>`;
+  };
 
   const rows = files.length
     ? files.map(f => {
-        const kb   = (f.size / 1024).toFixed(1);
-        const date = new Date(f.modified).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
-        const enc  = encodeURIComponent(f.name);
+        const kb   = ((f.size || 0) / 1024).toFixed(1);
+        const date = f.modified ? new Date(f.modified).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "—";
+        const enc  = encodeURIComponent(f.name || "");
+        const kind = f.type || (f.name || "").toUpperCase().endsWith(".PPTX") ? "PPTX" : "XLSX";
         return `<tr id="row-${enc}">
           <td>
-            <div class="bold" style="font-size:13px">${f.name}</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              ${typeTag(kind)}
+              <span class="bold" style="font-size:13px">${f.name || "—"}</span>
+            </div>
           </td>
           <td style="white-space:nowrap">${kb} KB</td>
           <td style="white-space:nowrap">${date}</td>
@@ -969,33 +980,37 @@ async function pagOutput() {
             <div style="display:flex;gap:6px">
               <a href="/api/output/download/${enc}" class="btn btn-sm btn-outline" download>⬇ Download</a>
               <button class="btn btn-sm" style="color:var(--danger);border:1px solid var(--danger);background:#fff;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:600"
-                onclick="deleteFile('${enc}', '${f.name}')">🗑 Delete</button>
+                onclick="deleteFile('${enc}', '${escHtml(f.name || '')}')">🗑 Delete</button>
             </div>
           </td>
         </tr>`;
       }).join("")
     : `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted)">
-         No Excel files yet — <a href="#kdd-generator" style="color:var(--accent)">generate a KDD log</a> first.
+         No output files yet — <a href="#kdd-generator" style="color:var(--accent)">generate a KDD log</a> first.
        </td></tr>`;
 
   const deleteAllBtn = files.length
     ? `<button class="btn btn-sm" style="color:var(--danger);border:1px solid #fca5a5;background:#fff2f2;padding:5px 14px;border-radius:6px;font-size:12.5px;font-weight:600"
-         onclick="deleteAll()">🗑 Delete All Excel Files</button>`
+         onclick="deleteAll()">🗑 Delete All Files</button>`
     : "";
+
+  const xlsxCount = files.filter(f => (f.type || "XLSX") === "XLSX").length;
+  const pptxCount = files.filter(f => f.type === "PPTX").length;
+  const countLabel = files.length === 0
+    ? "No output files"
+    : [xlsxCount ? `${xlsxCount} Excel` : "", pptxCount ? `${pptxCount} PPT` : ""].filter(Boolean).join(" · ") + ` file${files.length !== 1 ? "s" : ""}`;
 
   return `
     <div class="page-header flex items-center justify-between">
       <div>
         <div class="page-title">Output Files</div>
         <div class="page-sub">
-          ${files.length} Excel file${files.length !== 1 ? "s" : ""} ·
-          <span style="font-family:monospace;font-size:12px;background:#f3f4f6;padding:1px 7px;border-radius:4px">${folder}</span>
+          ${countLabel} ·
+          <span style="font-family:monospace;font-size:12px;background:#f3f4f6;padding:1px 7px;border-radius:4px" title="${escHtml(folder)}">${folder.length > 60 ? "…" + folder.slice(-55) : folder}</span>
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${deleteAllBtn}
-        <!-- Export Full Cache hidden — cache quality is template-only (656/657 items generic) -->
-        <!-- <button class="btn btn-outline" id="fullCacheBtn" onclick="exportFullCache()">⬇ Export Full Cache</button> -->
         <button class="btn btn-primary" onclick="navigate('kdd-generator')">◈ New KDD Log</button>
       </div>
     </div>
@@ -1003,8 +1018,8 @@ async function pagOutput() {
     <div id="full-cache-msg"></div>
 
     <div class="alert alert-info" style="font-size:12.5px">
-      📁 Files are saved to <code style="background:rgba(0,0,0,.06);padding:1px 6px;border-radius:3px">${folder}</code>
-      &nbsp;·&nbsp; <strong>kdd-data.json</strong> (raw KDD data) is kept separately and is never deleted here.
+      📁 Files are saved to <code style="background:rgba(0,0,0,.06);padding:1px 6px;border-radius:3px" title="${escHtml(folder)}">${folder.length > 80 ? "…" + folder.slice(-75) : folder}</code>
+      &nbsp;·&nbsp; kdd-data.json (raw KDD data) is kept separately and is never deleted here.
     </div>
 
     <div id="output-msg"></div>
@@ -1041,7 +1056,7 @@ function bindOutput() {
       }
       showOutputMsg(`✅ "${name}" deleted.`, "success");
     } else {
-      showOutputMsg(`⚠️ ${data.error}`, "danger");
+      showOutputMsg(`⚠️ ${data.error || data.detail || "Delete failed"}`, "danger");
     }
   };
 
@@ -1057,11 +1072,10 @@ function bindOutput() {
           No Excel files — <a href="#kdd-generator" style="color:var(--accent)">generate a KDD log</a> first.
         </td></tr>`;
       showOutputMsg(`✅ ${data.deleted} file${data.deleted !== 1 ? "s" : ""} deleted. kdd-data.json kept.`, "success");
-      // Hide the "Delete All" button
       const btn = document.querySelector("[onclick='deleteAll()']");
       if (btn) btn.remove();
     } else {
-      showOutputMsg(`⚠️ ${data.error}`, "danger");
+      showOutputMsg(`⚠️ ${data.error || data.detail || "Delete failed"}`, "danger");
     }
   };
 
@@ -2620,6 +2634,9 @@ function bindEditor() {
     if (!confirm("Load this project? Any unsaved changes to the current project will be lost.")) return;
     const data = await api.post("/api/projects/load", { slug });
     if (data.ok) {
+      // Update the active session so the editor loads the right project
+      window._lastKddSessionId = data.sessionId;
+      localStorage.setItem("kddSessionId", data.sessionId);
       const panel = document.getElementById("proj-panel");
       if (panel) panel.remove();
       navigate("editor");
@@ -3598,7 +3615,8 @@ function bindEditor() {
     btn.disabled = true;
     btn.textContent = "⏳ Building PPT…";
     try {
-      const res = await api.post("/api/kdd/ppt", {});
+      const sid = await _resolveSessionId();
+      const res = await api.post(`/api/kdd/ppt?session_id=${encodeURIComponent(sid)}`, {});
       if (res.ok && res.filename) {
         showToast("📊 PPT ready: " + res.filename);
         btn.textContent = "⬇ Download PPT";

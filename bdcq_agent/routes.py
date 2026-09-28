@@ -624,6 +624,71 @@ Return ONLY a JSON array. No markdown, no explanation.
     return {"ok": True, "rows": rows, "domain": domain}
 
 
+# ── POST /api/bdcq/upload-grounding ──────────────────────────────────────────
+# Accepts { files: [{ filename, content: base64 }] }, parses each Excel file,
+# saves to bdcq/grounding/<slug>.json, returns { ok, saved: [...] }.
+
+@router.post("/upload-grounding")
+async def upload_grounding_b64(request: Request):
+    import base64
+    import openpyxl
+    from datetime import datetime
+
+    body = await request.json()
+    file_list = body.get("files", [])
+    if not file_list:
+        raise HTTPException(400, "No files provided")
+
+    GROUNDING_DIR.mkdir(parents=True, exist_ok=True)
+    saved = []
+
+    for entry in file_list:
+        filename = entry.get("filename", "upload.xlsx")
+        b64_content = entry.get("content", "")
+        if not b64_content:
+            continue
+        try:
+            raw = base64.b64decode(b64_content)
+            wb  = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        except Exception as exc:
+            saved.append({"filename": filename, "error": str(exc)})
+            continue
+
+        sheets = []
+        for sheet_name in wb.sheetnames:
+            ws        = wb[sheet_name]
+            rows_iter = list(ws.iter_rows(values_only=True))
+            if not rows_iter:
+                continue
+            headers    = [str(h or "").strip() for h in rows_iter[0]]
+            sheet_rows = []
+            for row in rows_iter[1:]:
+                obj = {headers[i]: (str(v) if v is not None else "")
+                       for i, v in enumerate(row) if i < len(headers)}
+                if any(v for v in obj.values()):
+                    sheet_rows.append(obj)
+            if sheet_rows:
+                sheets.append({
+                    "sheet": sheet_name, "source": filename,
+                    "columns": headers, "rowCount": len(sheet_rows), "rows": sheet_rows,
+                })
+
+        slug     = _slug(filename)
+        out_path = GROUNDING_DIR / f"{slug}.json"
+        total_rows = sum(len(s["rows"]) for s in sheets)
+        payload = {
+            "origName":   filename,
+            "uploadedAt": datetime.utcnow().isoformat() + "Z",
+            "totalRows":  total_rows,
+            "sheets":     sheets,
+        }
+        out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), "utf-8")
+        saved.append({"filename": filename, "slug": slug,
+                      "sheetCount": len(sheets), "totalRows": total_rows})
+
+    return {"ok": True, "saved": saved}
+
+
 # ── POST /api/bdcq/export-editor ─────────────────────────────────────────────
 # Called by bdcqExportExcel() in the editor tab.
 # Saves the file to output/ and returns JSON {ok, filename, rowCount} so the
@@ -789,3 +854,194 @@ async def bdcq_export(request: Request):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── POST /api/bdcq/generate ───────────────────────────────────────────────────
+# Quick Export: filter rows (same as /preview) + build Excel + save to output/.
+# Returns JSON {ok, filename, rowCount} so the frontend can offer a download link.
+
+@router.post("/generate")
+async def bdcq_generate(request: Request):
+    import base64
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from datetime import date
+    from routes.deps import OUTPUT_DIR
+
+    body             = await request.json()
+    filename_stem    = (body.get("filename") or "").strip()
+    client_name      = (body.get("clientName") or "").strip()
+    scope_ids        = body.get("scopeIds", [])
+    selected_domains = body.get("selectedDomains", [])
+    selected_columns = body.get("selectedColumns", [])
+    countries        = body.get("countries", [])
+    overview_text    = (body.get("overviewText") or "").strip()
+    client_logo_b64  = body.get("clientLogo")
+    partner_logo_b64 = body.get("partnerLogo")
+
+    bdcq_data = _read_bdcq()
+    if not bdcq_data:
+        raise HTTPException(404, "bdcq-questions.json not found. Upload BDCQ files first.")
+
+    # ── Build rows (same logic as /preview) ──────────────────────────────────
+    scope_set   = {s.upper().strip() for s in scope_ids if s}
+    country_set = {c.upper().strip() for c in countries if c}
+    domain_set  = {d.lower().strip() for d in selected_domains if d}
+
+    def is_country_sheet(name):
+        return bool(re.match(r"^[A-Za-z]{2}$", name)) or name == "LC"
+
+    all_rows, all_headers, header_set = [], [], set()
+
+    for domain in bdcq_data.get("domains", []):
+        domain_name = domain.get("domain", "")
+        if domain_set and domain_name.lower().strip() not in domain_set:
+            continue
+        for sheet in domain.get("sheets", []):
+            sheet_name = sheet.get("sheet", "")
+            if re.match(r"template|change history|overview|instructions|cover|readme", sheet_name, re.IGNORECASE):
+                continue
+            if is_country_sheet(sheet_name):
+                if country_set and sheet_name.upper() not in country_set:
+                    continue
+            for h in sheet.get("headers", []):
+                if h and h not in header_set:
+                    header_set.add(h)
+                    all_headers.append(h)
+            for row in sheet.get("rows", []):
+                if scope_set:
+                    vals = {str(v or "").upper().strip() for v in row.values()}
+                    if not vals.intersection(scope_set):
+                        continue
+                all_rows.append({
+                    "Module":  domain_name,
+                    "Section": sheet_name,
+                    "_localizationCountry": sheet_name.upper() if is_country_sheet(sheet_name) else "Global",
+                    **row,
+                })
+
+    if country_set:
+        ac_rows = _read_all_countries()
+        if ac_rows:
+            _COUNTRY_NORM = {
+                "india":"IN","germany":"DE","usa":"US","uk":"GB","brazil":"BR",
+                "france":"FR","australia":"AU","singapore":"SG","japan":"JP",
+                "china":"CN","south korea":"KR","vietnam":"VN","netherlands":"NL",
+                "uae":"AE","saudi arabia":"SA",
+            }
+            seen_q: set = set()
+            for row in ac_rows:
+                cr       = (row.get("Country / Region") or "").strip()
+                question = (row.get("Question") or "").strip()
+                if not cr or cr == "Global" or not question:
+                    continue
+                country_part     = re.sub(r"^Local\s*[–\-]\s*", "", cr, flags=re.IGNORECASE).strip()
+                is_all_countries = country_part.lower() == "all countries"
+                section_code     = None
+                if is_all_countries:
+                    dk = f"LC::{question}"
+                    if dk in seen_q: continue
+                    seen_q.add(dk); section_code = "LC"
+                else:
+                    for part in re.split(r"[,;]", country_part):
+                        part = part.strip().lower()
+                        iso  = _COUNTRY_NORM.get(part) or part.upper()[:2]
+                        if iso in country_set:
+                            dk = f"{iso}::{question}"
+                            if dk not in seen_q:
+                                seen_q.add(dk); section_code = iso
+                            break
+                if not section_code:
+                    continue
+                bpa = (row.get("Business Process Area") or "").lower()
+                matches = not domain_set or any(d in bpa or bpa in d for d in domain_set)
+                if not matches:
+                    continue
+                all_rows.append({
+                    "Module": row.get("Business Process Area", "General"),
+                    "Section": section_code,
+                    "_localizationCountry": section_code,
+                    "_fromAllCountries": True,
+                    "Question": question,
+                    "Topic": row.get("Topic", ""),
+                    "Country / Region": "Local – All Countries" if section_code == "LC"
+                                        else f"Local – {_ISO_DISPLAY.get(section_code, section_code)}",
+                })
+                for h in ["Question","Topic","Topic Definition","SAP Workstream","Localization Type","Sample Value"]:
+                    if h not in header_set:
+                        header_set.add(h); all_headers.append(h)
+
+    if not all_rows:
+        raise HTTPException(400, "No BDCQ rows matched the selected domains/countries.")
+
+    base_cols = ["Module", "Section"]
+    data_cols = [h for h in all_headers
+                 if selected_columns and h.lower() in {c.lower() for c in selected_columns}] \
+                if selected_columns else all_headers
+    columns = base_cols + data_cols
+
+    # ── Build Excel ───────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+
+    # Cover sheet
+    cover = wb.active
+    cover.title = "Cover"
+    cover.sheet_view.showGridLines = False
+    cover.column_dimensions["A"].width = 80
+    cover_fill = PatternFill("solid", fgColor="1F4E79")
+    cover["A1"] = "Business Driven Configuration Questionnaire (BDCQ)"
+    cover["A1"].font = Font(name="Calibri", color="FFFFFF", bold=True, size=20)
+    cover["A1"].fill = cover_fill
+    cover["A1"].alignment = Alignment(wrap_text=True, vertical="center", indent=2)
+    cover.row_dimensions[1].height = 60
+    cover["A2"] = f"Client: {client_name}" if client_name else "SAP S/4HANA Cloud — Public Edition"
+    cover["A2"].font = Font(name="Calibri", color="DDEEFF", size=13)
+    cover["A2"].fill = PatternFill("solid", fgColor="2563EB")
+    cover["A2"].alignment = Alignment(vertical="center", indent=2)
+    cover.row_dimensions[2].height = 32
+    if overview_text:
+        cover["A3"] = overview_text
+        cover["A3"].font = Font(name="Calibri", color="1F2937", size=11)
+        cover["A3"].alignment = Alignment(wrap_text=True, vertical="top", indent=2)
+        cover.row_dimensions[3].height = max(80, len(overview_text) // 3)
+
+    try:
+        from openpyxl.drawing.image import Image as XLImage
+        img_row = 4 if overview_text else 3
+        for b64_data, col_anchor in [(client_logo_b64, "A"), (partner_logo_b64, "C")]:
+            if not b64_data:
+                continue
+            raw = b64_data.split(",", 1)[-1]
+            xl_img = XLImage(io.BytesIO(base64.b64decode(raw)))
+            xl_img.width, xl_img.height = 160, 80
+            cover.add_image(xl_img, f"{col_anchor}{img_row}")
+    except Exception:
+        pass
+
+    # Data sheet
+    ws = wb.create_sheet("BDCQ Questions")
+    header_fill2 = PatternFill("solid", fgColor="1F4E79")
+    ws.append(columns)
+    for cell in ws[1]:
+        cell.font  = Font(color="FFFFFF", bold=True, size=9)
+        cell.fill  = header_fill2
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+    for row in all_rows:
+        ws.append([str(row.get(col) or "") for col in columns])
+        for cell in ws[ws.max_row]:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+    for i in range(1, len(columns) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 38
+    ws.freeze_panes = "A2"
+
+    # ── Save to output/ ───────────────────────────────────────────────────────
+    today = date.today().strftime("%Y%m%d")
+    if not filename_stem:
+        safe = re.sub(r"[^\w]", "_", client_name or "Client")[:20]
+        filename_stem = f"{safe}_BDCQ_{today}"
+    filename = re.sub(r"[^\w.\-]", "_", filename_stem) + ".xlsx"
+    out_path = OUTPUT_DIR / filename
+    wb.save(str(out_path))
+
+    return {"ok": True, "filename": filename, "rowCount": len(all_rows)}
