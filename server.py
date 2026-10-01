@@ -48,7 +48,7 @@ app.add_middleware(
 
 from routes.kdd import router as kdd_router
 from routes.catalog import router as catalog_router
-from a2a.router import router as a2a_router, AGENT_CARD
+from a2a.router import router as a2a_router, build_card
 from bdcq_agent.routes import router as bdcq_router
 
 app.include_router(kdd_router)
@@ -59,8 +59,9 @@ app.include_router(bdcq_router)
 # ── Well-known agent card ─────────────────────────────────────────────────────
 
 @app.get("/.well-known/agent.json")
-async def agent_card():
-    return JSONResponse(AGENT_CARD)
+async def agent_card(request: Request):
+    base_url = str(request.base_url).rstrip("/")
+    return JSONResponse(build_card(base_url))
 
 
 # ── Health endpoint ───────────────────────────────────────────────────────────

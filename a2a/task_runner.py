@@ -9,8 +9,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 
+class InputRequired(Exception):
+    """Raised when required input parameters are missing from the task."""
+
+
 def _get_user_text(task: dict) -> str:
-    msg = (task.get("messages") or [{}])[0]
+    msg = (task.get("history") or [{}])[0]
     for part in msg.get("parts", []):
         if part.get("type") == "text":
             return part.get("text", "")
@@ -18,7 +22,7 @@ def _get_user_text(task: dict) -> str:
 
 
 def _get_params(task: dict) -> dict:
-    msg = (task.get("messages") or [{}])[0]
+    msg = (task.get("history") or [{}])[0]
     for part in msg.get("parts", []):
         if part.get("type") == "data":
             return part.get("data", {})
@@ -66,8 +70,16 @@ async def _run_kdd_generate(params: dict, text: str, on_progress) -> list:
         if key in cat_map:
             items.append(cat_map[key])
 
+    if not scope_ids:
+        raise InputRequired(
+            "Please provide SAP scope item IDs (e.g. BD6, J59, BEI) so I can generate the KDD log."
+        )
+
     if not items:
-        raise ValueError(f"None of the scope IDs found in catalog: {scope_ids}")
+        raise InputRequired(
+            f"None of the scope IDs were found in the catalog: {scope_ids}. "
+            "Please check the IDs and ensure scope-catalog.json is up to date."
+        )
 
     result = await orchestrator.run(
         items=items, cache_data=None, on_event=on_progress, concurrency=2, mode="ai"

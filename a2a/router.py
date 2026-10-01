@@ -1,9 +1,9 @@
-# a2a/router.py — Google A2A protocol v0.2.2 — fully compliant
-# Agent Card at /.well-known/agent.json
-# JSON-RPC 2.0  POST /a2a
-# SSE streaming GET  /a2a/tasks/{id}/subscribe
-# Handoff        GET  /a2a/tasks/{id}/handoff?ack=true
-# Event triggers POST /a2a/trigger  |  POST /a2a/listeners
+# a2a/router.py — A2A protocol v0.2.x — spec-compliant
+# Agent Card  GET  /.well-known/agent.json  (served via server.py)
+# JSON-RPC    POST /a2a  and  POST /a2a/    (both handled, no redirect)
+# SSE stream  GET  /a2a/tasks/{id}/subscribe
+# Handoff     GET  /a2a/tasks/{id}/handoff?ack=true   (internal, non-A2A)
+# Trigger     POST /a2a/trigger                        (internal, non-A2A)
 import asyncio
 import json
 import os
@@ -18,10 +18,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 router = APIRouter()
 
-_BASE_URL     = os.environ.get("AGENT_BASE_URL", "http://localhost:3000")
-_AGENT_ID     = "explore-accelerator"
-_AGENT_VER    = "1.0.0"
-_AUDIT_LOG    = Path(__file__).parent.parent / "output" / "a2a-audit.log"
+_BASE_URL  = os.environ.get("AGENT_BASE_URL", "http://localhost:3000")
+_AGENT_ID  = "explore-accelerator"
+_AGENT_VER = "1.0.0"
+_AUDIT_LOG = Path(__file__).parent.parent / "output" / "a2a-audit.log"
+
 
 # ── Audit logging ──────────────────────────────────────────────────────────────
 
@@ -45,10 +46,10 @@ def _audit(event: str, task_id: str, run_id: str, **kw):
 # ── Payload injection screening ────────────────────────────────────────────────
 
 _INJECT_RE = re.compile(
-    r"ignore (all |previous |prior )?instructions"
+    r"ignore\b[\w\s]{0,30}\binstructions"   # covers "ignore all/previous/prior/all previous instructions"
     r"|new (system )?prompt"
     r"|you are now"
-    r"|disregard (all |your )?"
+    r"|disregard\b[\w\s]{0,20}\b"
     r"|<\s*script"
     r"|system\s*:",
     re.IGNORECASE,
@@ -64,101 +65,109 @@ def _screen(message: dict) -> str | None:
     return None
 
 
-# ── Agent Card ─────────────────────────────────────────────────────────────────
-# Satisfies both the PDF blueprint spec and the A2A v0.2.2 wire format.
+# ── Agent Card builder (dynamic — base URL derived from request) ───────────────
 
-AGENT_CARD = {
-    # ── PDF spec fields (used by orchestrators for capability-based discovery) ─
-    "name":        _AGENT_ID,
-    "version":     _AGENT_VER,
-    "description": (
-        "Generates Key Design Decisions (KDD) for SAP S/4HANA Cloud Public Edition. "
-        "Covers BDCQ enrichment, KDD log generation, and scope catalog search."
-    ),
-    "capabilities": ["kdd.generate", "catalog.search", "bdcq.status"],
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "scope_ids": {
-                "type": "array", "items": {"type": "string"},
-                "description": "SAP scope item IDs (e.g. ['BD6', 'J59', 'BEI'])",
+def build_card(base_url: str) -> dict:
+    """Build the A2A agent card using the correct base URL for this deployment."""
+    rpc_url = f"{base_url}/a2a/"
+    return {
+        # ── A2A v0.2.x required fields ─────────────────────────────────────
+        "name":            _AGENT_ID,
+        "version":         _AGENT_VER,
+        "protocolVersion": "0.2.2",
+        "description": (
+            "Generates Key Design Decisions (KDD) for SAP S/4HANA Cloud Public Edition. "
+            "Covers BDCQ enrichment, KDD log generation, and scope catalog search."
+        ),
+        "url": rpc_url,
+        # capabilities: object with protocol-level boolean flags (spec §4.1)
+        "capabilities": {
+            "streaming":              True,
+            "pushNotifications":      False,
+            "stateTransitionHistory": False,
+        },
+        # security: no auth required for local / internal deployment
+        "securitySchemes": {},
+        "security":        [],
+        "defaultInputModes":  ["text/plain", "application/json"],
+        "defaultOutputModes": ["application/json"],
+        # ── Skills (per-capability detail for discovery matching) ───────────
+        "skills": [
+            {
+                "id":          "kdd.generate",
+                "name":        "KDD Generator",
+                "description": "Generate 15 KDD questions per SAP scope item with RICEF classification.",
+                "tags":        ["kdd", "sap", "s4hana", "cloud", "explore"],
+                "examples":    ["Generate KDD for BD6, J59 — Client: Acme Corp, Project: S4H Rollout"],
+                "inputModes":  ["text/plain", "application/json"],
+                "outputModes": ["application/json"],
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "scope_ids": {"type": "array",  "items": {"type": "string"}},
+                        "client":    {"type": "string"},
+                        "project":   {"type": "string"},
+                    },
+                    "required": ["scope_ids"],
+                },
+                "outputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kdd_excel_url":  {"type": "string"},
+                        "scope_overview": {"type": "array"},
+                        "total_kdds":     {"type": "integer"},
+                    },
+                },
             },
-            "client":  {"type": "string", "description": "Client / company name"},
-            "project": {"type": "string", "description": "Project name"},
-        },
-        "required": ["scope_ids"],
-    },
-    "output_schema": {
-        "type": "object",
-        "properties": {
-            "kdd_excel_url":  {"type": "string",  "description": "Download URL for the generated KDD Excel log"},
-            "scope_overview": {"type": "array",   "description": "Array of scope items with KDD overviews"},
-            "total_kdds":     {"type": "integer", "description": "Total KDD rows generated"},
-        },
-    },
-    "auth":     "none",
-    "endpoint": f"{_BASE_URL}/a2a",
+            {
+                "id":          "catalog.search",
+                "name":        "Scope Catalog Search",
+                "description": "Search the SAP for Me process catalog by name, LOB, or keyword.",
+                "tags":        ["catalog", "scope", "sap"],
+                "examples":    ["Find Finance scope items", "Search for Accounts Payable"],
+                "inputModes":  ["text/plain"],
+                "outputModes": ["application/json"],
+            },
+            {
+                "id":          "bdcq.status",
+                "name":        "BDCQ Status",
+                "description": "Check if BDCQ questions are loaded and return domain statistics.",
+                "tags":        ["bdcq", "status"],
+                "examples":    ["Is BDCQ loaded?"],
+                "inputModes":  ["text/plain"],
+                "outputModes": ["application/json"],
+            },
+        ],
+    }
 
-    # ── A2A v0.2.2 protocol fields ─────────────────────────────────────────────
-    "url":             f"{_BASE_URL}/a2a",
-    "protocolVersion": "0.2.2",
-    "protocolCapabilities": {
-        "streaming":              True,
-        "pushNotifications":      False,
-        "stateTransitionHistory": False,
-    },
-    "authentication":    {"schemes": ["none"]},
-    "defaultInputModes": ["text/plain", "application/json"],
-    "defaultOutputModes":["application/json"],
 
-    # ── Skills (detailed per-capability definitions) ───────────────────────────
-    "skills": [
-        {
-            "id":          "kdd.generate",
-            "name":        "KDD Generator",
-            "description": "Generate 15 KDD questions per SAP scope item with RICEF classification.",
-            "tags":        ["kdd", "sap", "s4hana", "cloud", "explore"],
-            "examples":    ["Generate KDD for BD6, J59 — Client: Acme Corp, Project: S4H Rollout"],
-            "inputModes":  ["text/plain", "application/json"],
-            "outputModes": ["application/json"],
-        },
-        {
-            "id":          "catalog.search",
-            "name":        "Scope Catalog Search",
-            "description": "Search the SAP for Me process catalog by name, LOB, or keyword.",
-            "tags":        ["catalog", "scope", "sap"],
-            "examples":    ["Find Finance scope items", "Search for Accounts Payable"],
-            "inputModes":  ["text/plain"],
-            "outputModes": ["application/json"],
-        },
-        {
-            "id":          "bdcq.status",
-            "name":        "BDCQ Status",
-            "description": "Check if BDCQ questions are loaded and return domain statistics.",
-            "tags":        ["bdcq", "status"],
-            "examples":    ["Is BDCQ loaded?", "How many BDCQ questions are available?"],
-            "inputModes":  ["text/plain"],
-            "outputModes": ["application/json"],
-        },
-    ],
+# Fallback static card for imports that don't have a request context
+AGENT_CARD = build_card(_BASE_URL)
+
+
+# ── Error registry ─────────────────────────────────────────────────────────────
+# -32001..-32003 are standard A2A error codes (kept as-is)
+# -32004/-32005 are reserved by the spec for UnsupportedOperation / ContentTypeNotSupported
+# Custom errors use -32050+ (unreserved range)
+
+_A2A_ERRORS = {
+    "TASK_NOT_FOUND":          {"code": -32001, "message": "Task not found"},
+    "TASK_CANT_CANCEL":        {"code": -32002, "message": "Task cannot be cancelled in current state"},
+    "PUSH_NOT_SUPPORTED":      {"code": -32003, "message": "Push notifications not supported"},
+    "PAYLOAD_REJECTED":        {"code": -32050, "message": "Payload rejected: failed injection screening"},
+    "TASK_NOT_COMPLETE":       {"code": -32051, "message": "Task not completed — handoff unavailable"},
+    "UNSUPPORTED_OPERATION":   {"code": -32004, "message": "Unsupported operation"},
+    "CONTENT_TYPE_NOT_SUPPORTED": {"code": -32005, "message": "Content type not supported"},
 }
 
-# ── In-memory state ────────────────────────────────────────────────────────────
+
+# ── In-memory task store ───────────────────────────────────────────────────────
 
 _tasks:       dict[str, dict]          = {}
 _subscribers: dict[str, asyncio.Queue] = {}
-_listeners:   list[dict]               = []
-
-_A2A_ERRORS = {
-    "TASK_NOT_FOUND":    {"code": -32001, "message": "Task not found"},
-    "TASK_CANT_CANCEL":  {"code": -32002, "message": "Task cannot be cancelled in current state"},
-    "PUSH_NOT_SUPPORTED":{"code": -32003, "message": "Push notifications not supported"},
-    "PAYLOAD_REJECTED":  {"code": -32004, "message": "Payload rejected: failed injection screening"},
-    "TASK_NOT_COMPLETE": {"code": -32005, "message": "Task not completed — handoff unavailable"},
-}
 
 
-# ── Context envelope (cross-agent trace) ───────────────────────────────────────
+# ── Context envelope ───────────────────────────────────────────────────────────
 
 def _envelope(task: dict) -> dict:
     return {
@@ -171,23 +180,23 @@ def _envelope(task: dict) -> dict:
 
 # ── Task lifecycle ─────────────────────────────────────────────────────────────
 
-def _new_task(message: dict, session_id: str | None = None) -> dict:
+def _new_task(message: dict, context_id: str | None = None) -> dict:
     task_id = str(uuid.uuid4())
     meta    = message.get("metadata") or {}
-    # Propagate caller's run_id for end-to-end trace correlation
     run_id  = meta.get("run_id") or task_id
     task = {
+        "kind":      "task",
         "id":        task_id,
-        "sessionId": session_id or task_id,
+        "contextId": context_id or task_id,   # was sessionId — renamed per spec
         "runId":     run_id,
         "status":    {"state": "submitted", "timestamp": _ts()},
-        "messages":  [message],
+        "history":   [message],               # was messages — renamed per spec
         "artifacts": [],
         "metadata":  {
-            "runId":         run_id,
-            "sourceAgent":   meta.get("source_agent", "external"),
-            "agentId":       _AGENT_ID,
-            "agentVersion":  _AGENT_VER,
+            "runId":        run_id,
+            "sourceAgent":  meta.get("source_agent", "external"),
+            "agentId":      _AGENT_ID,
+            "agentVersion": _AGENT_VER,
         },
     }
     _tasks[task_id] = task
@@ -202,7 +211,9 @@ def _set_state(task: dict, state: str, message_text: str | None = None) -> dict:
     }
     if message_text:
         task["status"]["message"] = {
-            "role": "agent", "parts": [{"type": "text", "text": message_text}]
+            "kind": "message",
+            "role": "agent",
+            "parts": [{"type": "text", "text": message_text}],
         }
     return task
 
@@ -211,15 +222,6 @@ def _push(task_id: str, event: dict):
     q = _subscribers.get(task_id)
     if q:
         q.put_nowait(event)
-
-
-def _publish_event(event_type: str, payload: dict):
-    """Notify registered listeners about an internal event."""
-    for lst in _listeners:
-        if lst.get("event") in (event_type, "*"):
-            _audit("event.published", payload.get("taskId", "system"),
-                   payload.get("runId", "system"), eventType=event_type,
-                   listenerId=lst.get("id", "?"))
 
 
 # ── JSON-RPC helpers ───────────────────────────────────────────────────────────
@@ -238,8 +240,12 @@ def _err(id_, error_key_or_obj):
 
 # ── Background task runner ─────────────────────────────────────────────────────
 
+class _InputRequired(Exception):
+    """Raised by the task runner when required parameters are absent."""
+
+
 async def _run_task(task: dict):
-    from .task_runner import execute
+    from .task_runner import execute, InputRequired as TRInputRequired
     task_id = task["id"]
     run_id  = task.get("runId", task_id)
 
@@ -255,10 +261,14 @@ async def _run_task(task: dict):
         task["artifacts"] = artifacts
         _set_state(task, "completed")
         for artifact in artifacts:
-            _push(task_id, {"id": task_id, "artifact": artifact, "final": False})
+            _push(task_id, {"id": task_id, "artifact": {**artifact, "kind": "artifact"}, "final": False})
         _push(task_id, {"id": task_id, "status": task["status"], "final": True})
         _audit("task.completed", task_id, run_id, artifactCount=len(artifacts))
-        _publish_event("kdd.completed", {"taskId": task_id, "runId": run_id})
+
+    except TRInputRequired as exc:
+        _set_state(task, "input-required", str(exc))
+        _push(task_id, {"id": task_id, "status": task["status"], "final": False})
+        _audit("task.input-required", task_id, run_id, prompt=str(exc))
 
     except Exception as exc:
         _set_state(task, "failed", str(exc)[:200])
@@ -266,14 +276,35 @@ async def _run_task(task: dict):
         _audit("task.failed", task_id, run_id, error=str(exc)[:200])
 
 
+# ── SSE helper ────────────────────────────────────────────────────────────────
+
+async def _sse_stream(task: dict) -> AsyncGenerator[str, None]:
+    task_id = task["id"]
+    q: asyncio.Queue = asyncio.Queue()
+    _subscribers[task_id] = q
+    asyncio.create_task(_run_task(task))
+    # First event: initial submitted state
+    yield f"data: {json.dumps({'id': task_id, 'status': task['status'], 'final': False})}\n\n"
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(q.get(), timeout=30)
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("final"):
+                    break
+            except asyncio.TimeoutError:
+                yield "data: {\"type\":\"heartbeat\"}\n\n"
+    finally:
+        _subscribers.pop(task_id, None)
+
+
 # ── Route handlers ─────────────────────────────────────────────────────────────
 
 @router.get("/")
-async def get_agent_card():
-    return JSONResponse(AGENT_CARD)
+async def get_agent_card(request: Request):
+    base = str(request.base_url).rstrip("/")
+    return JSONResponse(build_card(base))
 
-
-# ── Task read endpoints ────────────────────────────────────────────────────────
 
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str):
@@ -285,11 +316,7 @@ async def get_task(task_id: str):
 
 @router.get("/tasks/{task_id}/handoff")
 async def get_handoff(task_id: str, ack: bool = False):
-    """
-    Package a completed task as a versioned JSON handoff payload for the next
-    agent in the pipeline.  Pass ?ack=true to acknowledge receipt.
-    Schema: kdd_handoff_v1
-    """
+    """Internal non-A2A endpoint: package a completed task for downstream agent consumption."""
     task = _tasks.get(task_id)
     if not task:
         return JSONResponse({"error": "Task not found"}, status_code=404)
@@ -304,10 +331,9 @@ async def get_handoff(task_id: str, ack: bool = False):
         "status":         task["status"],
         "metadata":       task.get("metadata", {}),
     }
-
     if ack:
-        task["metadata"]["acknowledged"]    = True
-        task["metadata"]["acknowledgedAt"]  = _ts()
+        task["metadata"]["acknowledged"]   = True
+        task["metadata"]["acknowledgedAt"] = _ts()
         _audit("task.acknowledged", task_id, task.get("runId", task_id))
 
     return JSONResponse(payload)
@@ -338,14 +364,9 @@ async def subscribe_task(task_id: str):
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
-# ── Event-driven auto-connection ───────────────────────────────────────────────
-
 @router.post("/trigger")
 async def receive_trigger(request: Request):
-    """
-    Accept an event from another agent (e.g. charter.approved) and start a task.
-    Body: { "event": "charter.approved", "run_id": "...", "source_agent": "...", "payload": {...} }
-    """
+    """Internal non-A2A endpoint: accept an event from another agent and start a task."""
     try:
         body = await request.json()
     except Exception:
@@ -354,7 +375,8 @@ async def receive_trigger(request: Request):
     run_id  = body.get("run_id") or str(uuid.uuid4())
     payload = body.get("payload", {})
     message = {
-        "role":  "agent",
+        "kind":  "message",
+        "role":  "user",           # inbound messages are always "user" (finding #8)
         "parts": [{"type": "text", "text": json.dumps(payload)}],
         "metadata": {
             "run_id":       run_id,
@@ -362,113 +384,81 @@ async def receive_trigger(request: Request):
             "event":        body.get("event", ""),
         },
     }
+    # Screen trigger payloads the same as JSON-RPC payloads (finding #11)
+    err = _screen(message)
+    if err:
+        _audit("payload.rejected", "N/A", run_id, reason=err)
+        return JSONResponse({"error": err, "code": -32050}, status_code=400)
+
     task = _new_task(message)
     asyncio.create_task(_run_task(task))
     _audit("trigger.received", task["id"], run_id, eventType=body.get("event", ""))
     return JSONResponse({"ok": True, "taskId": task["id"], "runId": run_id})
 
 
-@router.post("/listeners")
-async def register_listener(request: Request):
-    """Register a callback so this agent notifies you when an event fires."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+# ── JSON-RPC entry point (handles both /a2a and /a2a/) ────────────────────────
 
-    listener = {
-        "id":           str(uuid.uuid4()),
-        "event":        body.get("event", "*"),
-        "callbackUrl":  body.get("callbackUrl", ""),
-        "registeredAt": _ts(),
-    }
-    _listeners.append(listener)
-    return JSONResponse({"ok": True, "listenerId": listener["id"]})
-
-
-@router.get("/listeners")
-async def list_listeners():
-    return JSONResponse({"listeners": _listeners})
-
-
-@router.delete("/listeners/{listener_id}")
-async def delete_listener(listener_id: str):
-    global _listeners
-    before   = len(_listeners)
-    _listeners = [l for l in _listeners if l["id"] != listener_id]
-    if len(_listeners) == before:
-        return JSONResponse({"error": "Listener not found"}, status_code=404)
-    return JSONResponse({"ok": True})
-
-
-# ── JSON-RPC entry point ───────────────────────────────────────────────────────
-
-@router.post("/")
-async def a2a_rpc(request: Request):
+async def _handle_rpc(request: Request) -> JSONResponse | StreamingResponse:
+    # Validate body is a JSON object (finding #9)
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"jsonrpc": "2.0", "id": None,
                              "error": {"code": -32700, "message": "Parse error"}})
 
-    id_    = body.get("id")
+    if not isinstance(body, dict):
+        return JSONResponse({"jsonrpc": "2.0", "id": None,
+                             "error": {"code": -32600, "message": "Invalid Request"}})
+
+    id_    = body.get("id")        # None means notification — no response
     method = body.get("method", "")
     params = body.get("params", {})
 
-    # ── tasks/send ────────────────────────────────────────────────────────────
-    if method == "tasks/send":
+    # ── message/send (spec name) + tasks/send (backward-compat alias) ─────────
+    if method in ("message/send", "tasks/send"):
         message    = params.get("message", {})
-        session_id = params.get("sessionId")
+        context_id = params.get("contextId") or params.get("sessionId")
 
         err = _screen(message)
         if err:
             _audit("payload.rejected", "N/A", "N/A", reason=err)
+            if id_ is None:
+                return JSONResponse(None, status_code=204)
             return JSONResponse(_err(id_, "PAYLOAD_REJECTED"))
 
-        task = _new_task(message, session_id)
+        task = _new_task(message, context_id)
         asyncio.create_task(_run_task(task))
         _audit("task.submitted", task["id"], task["runId"], method=method)
+        if id_ is None:
+            return JSONResponse(None, status_code=204)
         return JSONResponse(_ok(id_, task))
 
-    # ── tasks/sendSubscribe ───────────────────────────────────────────────────
-    if method == "tasks/sendSubscribe":
+    # ── message/stream (spec name) + tasks/sendSubscribe (backward-compat) ────
+    if method in ("message/stream", "tasks/sendSubscribe"):
         message    = params.get("message", {})
-        session_id = params.get("sessionId")
+        context_id = params.get("contextId") or params.get("sessionId")
 
         err = _screen(message)
         if err:
             _audit("payload.rejected", "N/A", "N/A", reason=err)
+            if id_ is None:
+                return JSONResponse(None, status_code=204)
             return JSONResponse(_err(id_, "PAYLOAD_REJECTED"))
 
-        task = _new_task(message, session_id)
-        q: asyncio.Queue = asyncio.Queue()
-        _subscribers[task["id"]] = q
-        asyncio.create_task(_run_task(task))
+        task = _new_task(message, context_id)
         _audit("task.submitted", task["id"], task["runId"], method=method)
-
-        async def sse_gen() -> AsyncGenerator[str, None]:
-            # Initial submitted-state event
-            yield f"data: {json.dumps({'id': task['id'], 'status': task['status'], 'final': False})}\n\n"
-            try:
-                while True:
-                    try:
-                        event = await asyncio.wait_for(q.get(), timeout=30)
-                        yield f"data: {json.dumps(event)}\n\n"
-                        if event.get("final"):
-                            break
-                    except asyncio.TimeoutError:
-                        yield "data: {\"type\":\"heartbeat\"}\n\n"
-            finally:
-                _subscribers.pop(task["id"], None)
-
-        return StreamingResponse(sse_gen(), media_type="text/event-stream")
+        return StreamingResponse(_sse_stream(task), media_type="text/event-stream")
 
     # ── tasks/get ─────────────────────────────────────────────────────────────
     if method == "tasks/get":
         task_id = params.get("id")
         task    = _tasks.get(task_id)
         if not task:
+            if id_ is None:
+                return JSONResponse(None, status_code=204)
             return JSONResponse(_err(id_, "TASK_NOT_FOUND"))
+        if id_ is None:
+            return JSONResponse(None, status_code=204)
         return JSONResponse(_ok(id_, task))
 
     # ── tasks/cancel ──────────────────────────────────────────────────────────
@@ -476,16 +466,38 @@ async def a2a_rpc(request: Request):
         task_id = params.get("id")
         task    = _tasks.get(task_id)
         if not task:
+            if id_ is None:
+                return JSONResponse(None, status_code=204)
             return JSONResponse(_err(id_, "TASK_NOT_FOUND"))
         if task["status"]["state"] in ("completed", "failed", "canceled"):
+            if id_ is None:
+                return JSONResponse(None, status_code=204)
             return JSONResponse(_err(id_, "TASK_CANT_CANCEL"))
         _set_state(task, "canceled")
         _push(task_id, {"type": "status", "status": task["status"], "final": True})
         _audit("task.canceled", task_id, task.get("runId", task_id))
+        if id_ is None:
+            return JSONResponse(None, status_code=204)
         return JSONResponse(_ok(id_, task))
 
     # ── tasks/pushNotificationConfig ──────────────────────────────────────────
     if method in ("tasks/pushNotificationConfig/set", "tasks/pushNotificationConfig/get"):
+        if id_ is None:
+            return JSONResponse(None, status_code=204)
         return JSONResponse(_err(id_, "PUSH_NOT_SUPPORTED"))
 
+    # ── Notification with unknown method: silent 204 ───────────────────────────
+    if id_ is None:
+        return JSONResponse(None, status_code=204)
+
     return JSONResponse(_err(id_, {"code": -32601, "message": f"Method not found: {method}"}))
+
+
+@router.post("/")
+async def a2a_rpc_slash(request: Request):
+    return await _handle_rpc(request)
+
+
+@router.post("")
+async def a2a_rpc(request: Request):
+    return await _handle_rpc(request)
