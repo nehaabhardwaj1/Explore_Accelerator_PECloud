@@ -112,7 +112,9 @@ def _extract_json(raw: str) -> list:
     s = cleaned.find("[")
     e = cleaned.rfind("]")
     if s < 0 or e < 0:
-        raise ValueError("No JSON array in response")
+        preview = cleaned[:300].replace("\n", "↵") if cleaned else "(empty)"
+        log.error("No JSON array in Claude response. Preview: %s", preview)
+        raise ValueError(f"No JSON array in response. Claude said: {preview[:120]}")
     json_str = cleaned[s:e + 1]
 
     try:
