@@ -22,7 +22,9 @@ const api = {
 const routes = {
   home:               pagHome,
   "bdcq-agent":       pagBDCQ,
+  "f2s-deck":         pagF2SDeck,
   "kdd-generator":    pagKDD,
+  "bpd-agent":        pagBPD,
   catalog:            pagCatalog,
   reference:          pagReference,
   output:             pagOutput,
@@ -53,7 +55,7 @@ async function render() {
     el.innerHTML = await fn();
     bindPage(page);
   } catch (e) {
-    el.innerHTML = `<div class="alert alert-danger">⚠️ ${e.message}</div>`;
+    el.innerHTML = `<div class="alert alert-danger">⚠️ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -66,7 +68,9 @@ document.addEventListener("DOMContentLoaded", render);
 // ── Bind page-specific logic ──────────────────────────────────────────────────
 function bindPage(page) {
   if (page === "bdcq-agent")       bindBDCQ();
+  if (page === "f2s-deck")         bindF2SDeck();
   if (page === "kdd-generator")    bindKDD();
+  if (page === "bpd-agent")        bindBPD();
   if (page === "catalog")          bindCatalog();
   if (page === "settings")         bindSettings();
   if (page === "output")           bindOutput();
@@ -149,7 +153,9 @@ async function pagHome() {
     <div class="section-divider" style="margin-top:28px">Explore Phase Skills</div>
     <div class="agent-list">
       ${agentCard(1,"BDCQ Enricher","Enriches BDCQ questions with country statutory requirements (GST, VAT, e-invoicing, withholding tax), industry-specific context, and Cloud PE constraint flags. Pre-answers mandatory compliance items and generates precise workshop prompts.","Active","Explore","navigate('bdcq-agent')")}
-      ${agentCard(2,"KDD Generator","4-stage AI pipeline per scope item: past decisions overlay → SAP context parsing → 3-call Claude generation (15 questions across 10 coverage areas) → Cloud PE validation with auto-fix. Exports a 5-sheet Excel with RICEF classification.","Active","SAP Activate","navigate('kdd-generator')")}
+      ${agentCard(2,"F2S Deck Generator","Generates a rich Fit-to-Standard workshop PowerPoint deck from scope catalog descriptions, BDCQ questions (L1/L2/L3 with Topic context), KDD cache decisions, and per-scope Claude intelligence briefs — process flow, gap watchpoints, Fiori config areas.","Active","F2S Workshop","navigate('f2s-deck')")}
+      ${agentCard(3,"KDD Generator","4-stage AI pipeline per scope item: past decisions overlay → SAP context parsing → 3-call Claude generation (15 questions across 10 coverage areas) → Cloud PE validation with auto-fix. Exports a 5-sheet Excel with RICEF classification.","Active","SAP Activate","navigate('kdd-generator')")}
+      ${agentCard(4,"BPD Agent","7-phase AI pipeline: L2–L5 process hierarchy generation → BPMN swimlane SVG diagrams → E2E narrative → Fit-to-Standard table → Next Steps → As-Is/To-Be gap analysis. Clean Core, SAP Fiori apps, Business Configuration paths.","Active","BPD","navigate('bpd-agent')")}
     </div>`;
 }
 
@@ -195,6 +201,530 @@ function agentCard(step, name, desc, status, tag, onclick) {
     </div>`;
 }
 
+// ── FIT-TO-STANDARD DECK page ─────────────────────────────────────────────────
+async function pagF2SDeck() {
+  let lobs = [];
+  try { lobs = await api.get("/api/catalog/lobs"); } catch (_) {}
+  const lobOptions = lobs.map(l =>
+    `<option value="${escHtml(l.name)}">${escHtml(l.name)} (${l.count})</option>`
+  ).join("");
+
+  const today = new Date();
+  const defaultDate = today.toLocaleDateString("en-GB", { day:"numeric", month:"long", year:"numeric" });
+
+  return `
+    <!-- Accenture purple header bar -->
+    <div style="background:linear-gradient(135deg,#460073 0%,#A100FF 100%);
+                border-radius:10px;padding:24px 28px;margin-bottom:22px;
+                display:flex;align-items:center;gap:18px">
+      <div style="font-size:48px;font-weight:900;color:#A100FF;line-height:1;
+                  text-shadow:0 0 20px rgba(161,0,255,0.5)">&gt;</div>
+      <div>
+        <div style="color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">
+          F2S Deck Generator</div>
+        <div style="color:#E0C8FF;font-size:13px;margin-top:3px">
+          Accenture · SAP S/4HANA Cloud Public Edition · Explore Phase</div>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div style="color:#E0C8FF;font-size:11px">Enriched with</div>
+        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;justify-content:flex-end">
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">📖 Catalog</span>
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">📋 BDCQ</span>
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">◈ KDD Cache</span>
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">✦ Claude AI</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="f2s-cache-warn"></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+
+      <!-- LEFT: Workshop Details -->
+      <div class="card" style="padding:20px">
+        <div class="section-divider" style="margin-top:0;color:#A100FF;border-color:#A100FF">
+          Workshop Details
+        </div>
+        <div style="display:flex;flex-direction:column;gap:11px">
+          <div>
+            <label class="form-label">Workshop Title</label>
+            <input id="f2s-title" class="form-input"
+                   placeholder="e.g. Fit-to-Standard Workshop — Finance"
+                   value="Fit-to-Standard Workshop" />
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label class="form-label">Client Name <span style="color:#A100FF">*</span></label>
+              <input id="f2s-client" class="form-input" placeholder="e.g. Acme Corp" />
+            </div>
+            <div>
+              <label class="form-label">SAP Release</label>
+              <input id="f2s-release-display" class="form-input" value="Loading…" disabled style="background:#f5f5f5;color:#888;cursor:not-allowed" />
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label class="form-label">Facilitator (Accenture)</label>
+              <input id="f2s-facilitator" class="form-input" placeholder="e.g. Jane Smith" />
+            </div>
+            <div>
+              <label class="form-label">Customer Process Owner</label>
+              <input id="f2s-owner" class="form-input" placeholder="e.g. John Doe" />
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Client Countries <span style="color:var(--muted);font-weight:400;font-size:11px">(optional — shown on cover, filters locale BDCQ questions)</span></label>
+            <div id="f2s-country-wrap" style="position:relative;user-select:none">
+              <div id="f2s-country-trigger" class="form-input"
+                   style="cursor:pointer;min-height:36px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:4px 30px 4px 8px;position:relative"
+                   onclick="f2sCountryToggle(event)">
+                <span id="f2s-country-pills"><span style="color:var(--muted,#999);font-size:13px">Select countries…</span></span>
+                <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--muted,#999);pointer-events:none;font-size:11px">&#9660;</span>
+              </div>
+              <div id="f2s-country-panel" style="display:none;position:absolute;z-index:999;top:calc(100% + 2px);left:0;right:0;
+                   background:var(--surface,#fff);border:1px solid var(--border,#ddd);border-radius:6px;
+                   box-shadow:0 6px 16px rgba(0,0,0,.18);overflow:hidden">
+                <div style="padding:6px 6px 2px">
+                  <input id="f2s-country-search" class="form-input"
+                         style="font-size:12px;padding:5px 8px;width:100%;box-sizing:border-box"
+                         placeholder="Search countries…"
+                         oninput="f2sCountryFilter(this.value)"
+                         onclick="event.stopPropagation()" />
+                </div>
+                <div id="f2s-country-list" style="max-height:220px;overflow-y:auto;padding:2px 4px 6px"></div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Workshop Date</label>
+            <input id="f2s-date" class="form-input" value="${escHtml(defaultDate)}" />
+          </div>
+          <div>
+            <label class="form-label">Brand Colour</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="f2s-color-text" class="form-input" value="#A100FF" style="flex:1;font-family:monospace"
+                     oninput="document.getElementById('f2s-color-pick').value=this.value" />
+              <input id="f2s-color-pick" type="color" value="#A100FF"
+                     style="width:42px;height:36px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px"
+                     oninput="document.getElementById('f2s-color-text').value=this.value" />
+              <button class="btn btn-outline" style="font-size:11px;padding:6px 10px;white-space:nowrap"
+                      onclick="document.getElementById('f2s-color-text').value='#A100FF';document.getElementById('f2s-color-pick').value='#A100FF'">
+                ↺ Accenture
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Scope Picker -->
+      <div class="card" style="padding:20px">
+        <div class="section-divider" style="margin-top:0;color:#A100FF;border-color:#A100FF">
+          Scope Items
+        </div>
+
+        <!-- Text input + preview trigger -->
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input id="f2s-scope-input" class="form-input"
+                 placeholder="Paste scope IDs: BD6, J59, BEI …"
+                 style="flex:1;font-family:monospace;font-size:13px"
+                 oninput="f2sSyncChips()" />
+          <button class="btn btn-outline" style="white-space:nowrap;font-size:12px"
+                  onclick="f2sPreview()">⟳ Preview</button>
+        </div>
+
+        <!-- Selected chips -->
+        <div id="f2s-chips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:10px"></div>
+
+        <!-- LOB browse -->
+        <select id="f2s-lob-filter" class="form-input" style="margin-bottom:8px"
+                onchange="f2sFilterLOB(this.value)">
+          <option value="">— Browse by Line of Business —</option>
+          ${lobOptions}
+        </select>
+        <div id="f2s-lob-items"
+             style="max-height:220px;overflow-y:auto;border:1px solid var(--border);
+                    border-radius:6px;padding:4px"></div>
+
+        <div style="font-size:11px;color:var(--muted);margin-top:8px">
+          Type IDs above, click "+ Add" from the list, or paste a comma-separated list.
+          Hit <kbd style="background:var(--bg-hover);padding:1px 5px;border-radius:3px">⟳ Preview</kbd> to check coverage before generating.
+        </div>
+      </div>
+    </div>
+
+    <!-- Data preview table (filled by f2sPreview()) -->
+    <div id="f2s-preview"></div>
+
+    <div style="display:flex;gap:12px;justify-content:center;margin:18px 0 10px">
+      <button class="btn btn-primary btn-generate" onclick="f2sGenerate()">
+        &gt;&nbsp;&nbsp;Generate F2S Workshop Deck
+      </button>
+    </div>
+
+    <div id="f2s-result"></div>`;
+}
+
+function bindF2SDeck() {
+
+  // ── Fetch current SAP release from server (computed from today's date) ───────
+  let _currentRelease = "";
+  (async () => {
+    try {
+      const r = await api.get("/api/f2s/current-release");
+      _currentRelease = r.code;
+      const el = document.getElementById("f2s-release-display");
+      if (el) el.value = `${r.code} (${r.label})`;
+    } catch (_) {
+      const el = document.getElementById("f2s-release-display");
+      if (el) el.value = "See SAP release notes";
+    }
+  })();
+
+  // ── Check KDD cache status ──────────────────────────────────────────────────
+  (async () => {
+    try {
+      const s = await api.get("/api/status");
+      const el = document.getElementById("f2s-cache-warn");
+      if (el && !s.cacheReady) {
+        el.innerHTML = `
+          <div class="alert alert-warning" style="margin-bottom:14px">
+            ⚠️ <strong>KDD cache not built.</strong>
+            Deck will still generate using the catalog and BDCQ — but the
+            "Design Decisions" reference slides require the cache.
+            <a href="#settings" style="color:var(--accent);font-weight:600;margin-left:8px">
+              Build cache in Settings →</a>
+          </div>`;
+      }
+    } catch (_) {}
+  })();
+
+  // ── Chip management ─────────────────────────────────────────────────────────
+  function getScopeIds() {
+    const raw = (document.getElementById("f2s-scope-input") || {}).value || "";
+    return [...new Set(raw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean))];
+  }
+
+  function renderChips() {
+    const ids = getScopeIds();
+    const el  = document.getElementById("f2s-chips");
+    if (!el) return;
+    const res = document.getElementById("f2s-result");
+    if (res && res.querySelector(".alert-warning")) res.innerHTML = "";
+    const prev = document.getElementById("f2s-preview");
+    if (prev && ids.length && prev.querySelector(".alert-warning")) prev.innerHTML = "";
+    el.innerHTML = ids.map(id => `
+      <span style="display:inline-flex;align-items:center;gap:5px;background:#F0E6FF;
+                   color:#460073;border:1px solid #D9BAFF;border-radius:20px;
+                   padding:3px 12px 3px 10px;font-size:12px;font-weight:600">
+        ${escHtml(id)}
+        <span style="cursor:pointer;color:#A100FF;font-size:14px;line-height:1"
+              onclick="f2sRemoveScope('${escHtml(id)}')">&times;</span>
+      </span>`).join("");
+  }
+
+  window.f2sSyncChips = () => renderChips();
+
+  window.f2sRemoveScope = (id) => {
+    const inp = document.getElementById("f2s-scope-input");
+    const ids = getScopeIds().filter(x => x !== id);
+    inp.value = ids.join(", ");
+    renderChips();
+    document.getElementById("f2s-preview").innerHTML = "";
+  };
+
+  // ── LOB browser ─────────────────────────────────────────────────────────────
+  window.f2sFilterLOB = async (lob) => {
+    const el = document.getElementById("f2s-lob-items");
+    if (!lob) { el.innerHTML = ""; return; }
+    el.innerHTML = `<div class="loader" style="padding:8px"><div class="spinner"></div></div>`;
+    try {
+      const items = await api.get(`/api/catalog/lob/${encodeURIComponent(lob)}`);
+      if (!items.length) {
+        el.innerHTML = `<div style="padding:8px;color:var(--muted);font-size:12px">No items</div>`;
+        return;
+      }
+      el.innerHTML = items.map(i => `
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    padding:5px 8px;border-radius:4px;font-size:12px;cursor:pointer"
+             onmouseenter="this.style.background='#F0E6FF'"
+             onmouseleave="this.style.background=''">
+          <span>
+            <strong style="color:#A100FF">${escHtml(i.id)}</strong>
+            — ${escHtml(i.name)}
+          </span>
+          <button class="btn btn-outline"
+                  style="font-size:10px;padding:2px 8px;height:24px;border-color:#A100FF;color:#A100FF"
+                  onclick="f2sAddScope('${escHtml(i.id)}')">+ Add</button>
+        </div>`).join("");
+    } catch (e) {
+      el.innerHTML = `<div style="padding:8px;color:var(--error);font-size:12px">${escHtml(e.message)}</div>`;
+    }
+  };
+
+  window.f2sAddScope = (id) => {
+    const inp = document.getElementById("f2s-scope-input");
+    const ids = getScopeIds();
+    if (!ids.includes(id.toUpperCase())) {
+      inp.value = [...ids, id.toUpperCase()].join(", ");
+      renderChips();
+    }
+  };
+
+  // ── Data preview table ───────────────────────────────────────────────────────
+  window.f2sPreview = async () => {
+    const scopeIds = getScopeIds();
+    const el = document.getElementById("f2s-preview");
+    if (!scopeIds.length) {
+      el.innerHTML = `<div class="alert alert-warning" style="margin-bottom:14px">
+        ⚠️ Enter at least one scope ID first.</div>`;
+      return;
+    }
+    el.innerHTML = `<div class="loader" style="padding:12px"><div class="spinner"></div> Checking coverage…</div>`;
+    try {
+      const r = await api.post("/api/f2s/preview", { scopeIds });
+      if (!r.ok) { el.innerHTML = ""; return; }
+
+      const rows = r.scopes.map(s => {
+        const notFound = !s.inCatalog;
+        const color    = notFound ? "color:#C0392B" : "";
+        const bdcqBadge = s.bdcq.total > 0
+          ? `<span style="color:#1E7B4D;font-weight:600">${s.bdcq.l1}L1 · ${s.bdcq.l2}L2 · ${s.bdcq.l3}L3</span>`
+          : `<span style="color:var(--muted)">—</span>`;
+        const kddBadge = s.kddCached > 0
+          ? `<span style="background:#F0E6FF;color:#460073;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600">${s.kddCached} KDDs cached</span>`
+          : `<span style="color:var(--muted);font-size:11px">no cache</span>`;
+        return `
+          <tr style="${notFound ? 'background:#FFF5F5' : ''}">
+            <td><strong style="color:#A100FF">${escHtml(s.id)}</strong></td>
+            <td style="${color}">${escHtml(s.name || "Not found in catalog")}</td>
+            <td>${escHtml(s.lob)}</td>
+            <td style="text-align:center">${bdcqBadge}</td>
+            <td style="text-align:center">${kddBadge}</td>
+            <td style="text-align:center">
+              ${notFound
+                ? '<span style="color:#C0392B;font-weight:600">✗ Missing</span>'
+                : '<span style="color:#1E7B4D;font-weight:600">✓</span>'}
+            </td>
+          </tr>`;
+      }).join("");
+
+      const missing = r.scopes.filter(s => !s.inCatalog).length;
+      const warn = missing ? `
+        <div style="margin-bottom:8px;padding:8px 12px;background:#FFF5F5;
+                    border:1px solid #FFCDD2;border-radius:6px;font-size:12px;color:#C0392B">
+          ⚠️  ${missing} scope ID${missing > 1 ? "s" : ""} not found in catalog — will be skipped.
+        </div>` : "";
+
+      el.innerHTML = `
+        ${warn}
+        <div class="card" style="padding:0;overflow:hidden;margin-bottom:18px">
+          <div style="background:#460073;color:#fff;padding:9px 16px;font-size:13px;font-weight:600">
+            ◧ Scope Coverage Preview — ${r.scopes.length} item${r.scopes.length !== 1 ? "s" : ""}
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th><th>Name</th><th>LOB</th>
+                  <th style="text-align:center">BDCQ Questions</th>
+                  <th style="text-align:center">KDD Cache</th>
+                  <th style="text-align:center">In Catalog</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="alert alert-warning">Preview failed: ${escHtml(e.message)}</div>`;  // already escaped
+    }
+  };
+
+  // ── Country multi-select ──────────────────────────────────────────────────────
+  const _F2S_COUNTRY_LIST = [
+    "Argentina","Australia","Austria","Brazil","Canada","China","Denmark",
+    "Finland","France","Germany","India","Italy","Japan","Mexico",
+    "Netherlands","New Zealand","Norway","Poland","Singapore","South Africa",
+    "South Korea","Spain","Sweden","Switzerland","United Kingdom","United States"
+  ];
+  let _f2sCountrySel  = new Set();
+  let _f2sCountryOpen = false;
+
+  window.f2sCountryToggle = function(e) {
+    if (e) e.stopPropagation();
+    const panel = document.getElementById("f2s-country-panel");
+    if (!panel) return;
+    _f2sCountryOpen = !_f2sCountryOpen;
+    panel.style.display = _f2sCountryOpen ? "block" : "none";
+    if (_f2sCountryOpen) {
+      _f2sCountryRender("");
+      setTimeout(() => document.getElementById("f2s-country-search")?.focus(), 50);
+    }
+  };
+
+  window.f2sCountryFilter = function(q) { _f2sCountryRender(q); };
+
+  function _f2sCountryRender(q) {
+    const lower    = (q || "").toLowerCase();
+    const filtered = _F2S_COUNTRY_LIST.filter(c => !lower || c.toLowerCase().includes(lower));
+    const list     = document.getElementById("f2s-country-list");
+    if (!list) return;
+    list.innerHTML = filtered.map(c => {
+      const chk = _f2sCountrySel.has(c) ? "checked" : "";
+      const esc = c.replace(/'/g, "\\'");
+      return `<label style="display:flex;align-items:center;gap:7px;padding:5px 8px;cursor:pointer;border-radius:4px;font-size:12px"
+                     onmouseover="this.style.background='var(--hover,#f5f5f5)'" onmouseout="this.style.background=''">
+        <input type="checkbox" value="${c}" ${chk} onchange="f2sCountryCheck('${esc}',this.checked)"
+               onclick="event.stopPropagation()" style="accent-color:var(--accent,#A100FF)" />${c}
+      </label>`;
+    }).join("");
+  }
+
+  window.f2sCountryCheck = function(country, checked) {
+    if (checked) _f2sCountrySel.add(country);
+    else         _f2sCountrySel.delete(country);
+    _f2sCountryUpdatePills();
+    _f2sCountryRender(document.getElementById("f2s-country-search")?.value || "");
+  };
+
+  function _f2sCountryUpdatePills() {
+    const pills = document.getElementById("f2s-country-pills");
+    if (!pills) return;
+    if (_f2sCountrySel.size === 0) {
+      pills.innerHTML = '<span style="color:var(--muted,#999);font-size:13px">Select countries…</span>';
+    } else {
+      pills.innerHTML = [..._f2sCountrySel].map(c => {
+        const esc = c.replace(/'/g, "\\'");
+        return `<span style="background:var(--accent,#A100FF);color:#fff;padding:2px 8px;border-radius:12px;font-size:11px;display:inline-flex;align-items:center;gap:3px">
+          ${c}<span onclick="event.stopPropagation();f2sCountryCheck('${esc}',false)"
+                    style="cursor:pointer;margin-left:2px;opacity:.8;font-size:14px;line-height:1">&times;</span>
+        </span>`;
+      }).join("");
+    }
+  }
+
+  document.addEventListener("click", function(e) {
+    if (!_f2sCountryOpen) return;
+    const wrap = document.getElementById("f2s-country-wrap");
+    if (wrap && !wrap.contains(e.target)) {
+      _f2sCountryOpen = false;
+      const panel = document.getElementById("f2s-country-panel");
+      if (panel) panel.style.display = "none";
+    }
+  });
+
+  // ── Generate ─────────────────────────────────────────────────────────────────
+  window.f2sGenerate = async () => {
+    const resultEl = document.getElementById("f2s-result");
+    const title       = document.getElementById("f2s-title").value.trim();
+    const client      = document.getElementById("f2s-client").value.trim();
+    const facilitator = document.getElementById("f2s-facilitator").value.trim();
+    const owner       = document.getElementById("f2s-owner").value.trim();
+    const wsDate      = document.getElementById("f2s-date").value.trim();
+    const countries   = [..._f2sCountrySel];
+    const release     = _currentRelease;
+    const color       = document.getElementById("f2s-color-text").value.trim() || "#A100FF";
+    const scopeIds    = getScopeIds();
+
+    if (!scopeIds.length) {
+      resultEl.innerHTML = `<div class="alert alert-warning">⚠️ Enter at least one scope ID.</div>`;
+      return;
+    }
+    if (!client) {
+      resultEl.innerHTML = `<div class="alert alert-warning">⚠️ Client name is required.</div>`;
+      return;
+    }
+
+    // Scroll to result and show live timer
+    resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    const _genStart = Date.now();
+    let _timerInterval = setInterval(() => {
+      const sec = ((Date.now() - _genStart) / 1000).toFixed(1);
+      const timerEl = document.getElementById("f2s-gen-timer");
+      if (timerEl) timerEl.textContent = `${sec}s`;
+    }, 100);
+
+    resultEl.innerHTML = `
+      <div class="alert alert-info" style="display:flex;align-items:center;gap:12px;padding:16px 20px">
+        <div class="spinner"></div>
+        <div>
+          <div style="font-weight:600">Building F2S workshop deck…</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">
+            ${scopeIds.length} scope item${scopeIds.length !== 1 ? "s" : ""}
+            · Claude generating per-scope intelligence
+            · est. ${scopeIds.length <= 1 ? "2–4 min" : `${scopeIds.length * 2}–${scopeIds.length * 3} min`}
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px">
+            ⏱ <span id="f2s-gen-timer">0.0s</span>
+          </div>
+        </div>
+      </div>`;
+
+    try {
+      const payload = {
+        workshopTitle: title, clientName: client, facilitator,
+        workshopDate: wsDate, brandColor: color,
+        customerProcessOwner: owner, countries, release, scopeIds,
+      };
+      const r = await api.post("/api/f2s/generate-deck", payload);
+
+      clearInterval(_timerInterval);
+      const wallSec = ((Date.now() - _genStart) / 1000).toFixed(1);
+
+      if (r.ok) {
+        const omHtml = r.omissions && r.omissions.length
+          ? `<details style="margin-top:10px;font-size:12px">
+               <summary style="cursor:pointer;color:#E0C8FF">
+                 ${r.omissions.length} omission${r.omissions.length !== 1 ? "s" : ""}</summary>
+               <ul style="margin:6px 0 0 16px;color:#E0C8FF">
+                 ${r.omissions.map(o => `<li>${escHtml(o)}</li>`).join("")}
+               </ul>
+             </details>`
+          : '<div style="font-size:12px;color:#B8FFD8;margin-top:6px">✓ No omissions — full coverage</div>';
+
+        const tokTotal = r.tokensEstimated || 0;
+        const tokIn    = r.tokensPrompt    || 0;
+        const tokOut   = r.tokensCompletion || 0;
+        const tokHtml  = tokTotal > 0
+          ? `<div style="margin-top:10px;font-size:11px;color:#C8A8FF;
+                         background:rgba(255,255,255,0.08);border-radius:6px;
+                         padding:8px 12px;display:inline-flex;gap:18px">
+               <span>⏱ ${r.elapsedSeconds ?? wallSec}s</span>
+               <span>🧮 ~${tokTotal.toLocaleString()} tokens (est.)</span>
+               <span style="opacity:.75">${tokIn.toLocaleString()} in · ${tokOut.toLocaleString()} out</span>
+             </div>`
+          : `<div style="margin-top:8px;font-size:11px;color:#C8A8FF">⏱ ${r.elapsedSeconds ?? wallSec}s</div>`;
+
+        resultEl.innerHTML = `
+          <div style="background:linear-gradient(135deg,#460073,#A100FF);
+                      border-radius:10px;padding:22px 26px;color:#fff">
+            <div style="font-size:18px;font-weight:700;margin-bottom:4px">
+              &gt; Workshop Deck Ready
+            </div>
+            <div style="color:#E0C8FF;font-size:13px;margin-bottom:14px">
+              ${r.slideCount} slides  ·  ${scopeIds.length} scope item${scopeIds.length !== 1 ? "s" : ""}
+              ·  Accenture S/4HANA Cloud PE theme
+            </div>
+            <a href="${r.downloadUrl}" download
+               style="display:inline-block;background:#fff;color:#460073;
+                      font-weight:700;font-size:14px;padding:10px 24px;
+                      border-radius:6px;text-decoration:none">
+              ↓  Download ${escHtml(r.filename)}
+            </a>
+            ${tokHtml}
+            ${omHtml}
+          </div>`;
+      } else {
+        resultEl.innerHTML = `<div class="alert alert-warning">⚠️ ${escHtml(r.error || "Unknown error")}</div>`;
+      }
+    } catch (err) {
+      clearInterval(_timerInterval);
+      resultEl.innerHTML = `<div class="alert alert-warning">⚠️ ${escHtml(err.message)}</div>`;
+    }
+  };
+
+}
+
 // ── CATALOG page ──────────────────────────────────────────────────────────────
 async function pagCatalog() {
   const lobs = await api.get("/api/catalog/lobs");
@@ -229,19 +759,19 @@ function bindCatalog() {
     const lob = decodeURIComponent(lobEnc);
     document.querySelectorAll(".lob-btn").forEach(b => b.classList.toggle("selected", b.dataset.lob === lob));
     const el  = document.getElementById("lob-items");
-    el.innerHTML = `<div class="loader"><div class="spinner"></div> Loading ${lob}…</div>`;
+    el.innerHTML = `<div class="loader"><div class="spinner"></div> Loading ${escHtml(lob)}…</div>`;
     const items = await api.get(`/api/catalog/lob/${encodeURIComponent(lob)}`);
     el.innerHTML = `
-      <div class="section-divider">${lob} — ${items.length} items</div>
+      <div class="section-divider">${escHtml(lob)} — ${items.length} items</div>
       <div class="card" style="padding:0;overflow:hidden">
         <div class="table-wrap">
           <table>
             <thead><tr><th>ID</th><th>Name</th><th>LOB</th></tr></thead>
             <tbody>${items.map(i => `
-              <tr style="cursor:pointer" onclick="showItemDetail('${i.id}')">
-                <td><span class="bold" style="color:var(--accent)">${i.id}</span></td>
-                <td>${i.name}</td>
-                <td><span class="badge badge-purple">${i.lob}</span></td>
+              <tr style="cursor:pointer" onclick="showItemDetail('${escHtml(i.id)}')">
+                <td><span class="bold" style="color:var(--accent)">${escHtml(i.id)}</span></td>
+                <td>${escHtml(i.name)}</td>
+                <td><span class="badge badge-purple">${escHtml(i.lob)}</span></td>
               </tr>`).join("")}
             </tbody>
           </table>
@@ -253,17 +783,17 @@ function bindCatalog() {
     const el = document.getElementById("search-results");
     if (!q.trim()) { el.innerHTML = ""; return; }
     const results = await api.get(`/api/catalog/search?q=${encodeURIComponent(q)}`);
-    if (!results.length) { el.innerHTML = `<div class="alert alert-info">No results for "${q}"</div>`; return; }
+    if (!results.length) { el.innerHTML = `<div class="alert alert-info">No results for &ldquo;${escHtml(q)}&rdquo;</div>`; return; }
     el.innerHTML = `
       <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
         <div class="table-wrap">
           <table>
             <thead><tr><th>ID</th><th>Name</th><th>LOB</th></tr></thead>
             <tbody>${results.map(i => `
-              <tr style="cursor:pointer" onclick="showItemDetail('${i.id}')">
-                <td><span class="bold" style="color:var(--accent)">${i.id}</span></td>
-                <td>${i.name}</td>
-                <td><span class="badge badge-purple">${i.lob}</span></td>
+              <tr style="cursor:pointer" onclick="showItemDetail('${escHtml(i.id)}')">
+                <td><span class="bold" style="color:var(--accent)">${escHtml(i.id)}</span></td>
+                <td>${escHtml(i.name)}</td>
+                <td><span class="badge badge-purple">${escHtml(i.lob)}</span></td>
               </tr>`).join("")}
             </tbody>
           </table>
@@ -280,15 +810,15 @@ function bindCatalog() {
     div.className = "card";
     div.innerHTML = `
       <div class="flex items-center justify-between mb-3">
-        <div><span class="bold" style="color:var(--accent);font-size:16px">${item.id}</span>
-          <span style="font-size:16px;font-weight:700;margin-left:8px">${item.name}</span></div>
+        <div><span class="bold" style="color:var(--accent);font-size:16px">${escHtml(item.id)}</span>
+          <span style="font-size:16px;font-weight:700;margin-left:8px">${escHtml(item.name)}</span></div>
         <button class="btn btn-sm btn-outline" onclick="document.getElementById('item-detail').remove()">✕ Close</button>
       </div>
-      <div class="mb-2"><span class="badge badge-purple">${item.lob}</span></div>
-      <div style="font-size:13px;color:var(--text);line-height:1.7;white-space:pre-wrap">${item.description}</div>
+      <div class="mb-2"><span class="badge badge-purple">${escHtml(item.lob)}</span></div>
+      <div style="font-size:13px;color:var(--text);line-height:1.7;white-space:pre-wrap">${escHtml(item.description)}</div>
       <div class="mt-3">
-        <button class="btn btn-primary btn-sm" onclick="navigate('kdd-generator');(function tryPrefill(n){window.prefillKDD?window.prefillKDD('${item.id}'):n>0&&setTimeout(()=>tryPrefill(n-1),150);})(20)">
-          ◈ Generate KDD for ${item.id}
+        <button class="btn btn-primary btn-sm" onclick="navigate('kdd-generator');(function tryPrefill(n){window.prefillKDD?window.prefillKDD('${escHtml(item.id)}'):n>0&&setTimeout(()=>tryPrefill(n-1),150);})(20)">
+          ◈ Generate KDD for ${escHtml(item.id)}
         </button>
       </div>`;
     document.getElementById("app").appendChild(div);
@@ -298,13 +828,35 @@ function bindCatalog() {
 
 // ── KDD GENERATOR page ────────────────────────────────────────────────────────
 async function pagKDD() {
-  const lobs = await api.get("/api/catalog/lobs");
-  const lobOpts = lobs.map(l => `<option value="${l.name}">${l.name} (${l.count})</option>`).join("");
+  const [lobs, countryMap] = await Promise.all([
+    api.get("/api/catalog/lobs"),
+    api.get("/api/catalog/country-map"),
+  ]);
+  const lobOpts    = lobs.map(l => `<option value="${l.name}">${l.name} (${l.count})</option>`).join("");
+  const regionOpts = Object.keys(countryMap).map(r => `<option value="${r}">${r}</option>`).join("");
+  // Embed country map for use by bindKDD without a second fetch
+  window._kddCountryMapData = countryMap;
 
   return `
-    <div class="page-header">
-      <div class="page-title">KDD Generator</div>
-      <div class="page-sub">Generate 15 Cloud PE-compliant Key Design Decision questions per scope item</div>
+    <div style="background:linear-gradient(135deg,#460073 0%,#A100FF 100%);
+                border-radius:10px;padding:24px 28px;margin-bottom:22px;
+                display:flex;align-items:center;gap:18px">
+      <div style="font-size:48px;font-weight:900;color:#A100FF;line-height:1;
+                  text-shadow:0 0 20px rgba(161,0,255,0.5)">◈</div>
+      <div>
+        <div style="color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">
+          KDD Generator</div>
+        <div style="color:#E0C8FF;font-size:13px;margin-top:3px">
+          Accenture · SAP S/4HANA Cloud Public Edition · Explore Phase</div>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div style="color:#E0C8FF;font-size:11px">Powered by</div>
+        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;justify-content:flex-end">
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">📖 Scope Catalog</span>
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">◈ KDD Cache</span>
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">✦ Claude AI</span>
+        </div>
+      </div>
     </div>
 
     <div class="card" id="kdd-form-card">
@@ -320,19 +872,27 @@ async function pagKDD() {
         </div>
       </div>
 
-      <div class="section-divider">2 · Select Scope Items</div>
-
-      <div class="form-group">
-        <label class="form-label">Quick Add by ID</label>
-        <div style="display:flex;gap:8px">
-          <div class="kdd-id-wrap">
-            <input id="kdd-id-input" class="form-input" placeholder="e.g. BD6, J59, BFB — type to search" autocomplete="off" />
-            <div id="kdd-ac-dropdown" class="ac-dropdown"></div>
-          </div>
-          <button class="btn btn-outline" onclick="kddAddByIds()">Add</button>
-        </div>
-        <div class="form-hint">Comma-separated IDs — or type to search by name, validated against all 657 SAP processes</div>
+      <div class="section-divider">2 · Client Country / Region
+        <span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:6px">optional — filters available scope items</span>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Region</label>
+          <select id="kdd-region" class="form-select" onchange="kddRegionChange(this.value)">
+            <option value="">— All Regions —</option>
+            ${regionOpts}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Country</label>
+          <select id="kdd-country" class="form-select" onchange="kddCountryChange(this.value)" disabled>
+            <option value="">— Select region first —</option>
+          </select>
+        </div>
+      </div>
+      <div id="kdd-country-info" style="font-size:12px;color:var(--text-muted);margin-top:4px;min-height:0"></div>
+
+      <div class="section-divider" style="margin-top:10px">3 · Browse &amp; Select Scope Items</div>
 
       <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:10px;flex-wrap:wrap">
         <div class="form-group" style="margin-bottom:0;min-width:200px">
@@ -344,23 +904,36 @@ async function pagKDD() {
         </div>
         <div class="form-group" style="margin-bottom:0;flex:1;min-width:180px">
           <label class="form-label">Filter items</label>
-          <input id="kdd-item-filter" class="form-input" placeholder="Type to filter…" oninput="kddFilter(this.value)" />
+          <input id="kdd-item-filter" class="form-input" placeholder="Type to filter by name or ID…" oninput="kddFilter(this.value)" />
         </div>
       </div>
 
       <div id="kdd-item-list" class="item-list" style="display:none"></div>
 
-      <div class="section-divider">3 · Selected Items</div>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+        <label class="form-label">Quick Add by ID
+          <span style="font-weight:400;color:var(--text-muted);font-size:11px;margin-left:4px">— add specific scope IDs directly</span>
+        </label>
+        <div style="display:flex;gap:8px">
+          <div class="kdd-id-wrap">
+            <input id="kdd-id-input" class="form-input" placeholder="e.g. BD6, J59, BFB — comma-separated or type to search" autocomplete="off" />
+            <div id="kdd-ac-dropdown" class="ac-dropdown"></div>
+          </div>
+          <button class="btn btn-outline" onclick="kddAddByIds()">Add</button>
+        </div>
+      </div>
+
+      <div class="section-divider">4 · Selected Items</div>
       <div id="kdd-chips" class="chips mb-3">
         <span class="text-muted text-sm">No items selected yet</span>
       </div>
 
       <div id="kdd-alert"></div>
 
-      <div style="margin-top:8px">
-        <button id="kdd-ai-btn" class="btn btn-primary" style="width:100%" onclick="kddGenerate('ai')"
+      <div style="margin-top:8px;text-align:center">
+        <button id="kdd-ai-btn" class="btn btn-primary btn-generate" onclick="kddGenerate('ai')"
           title="Claude generates tailored KDDs — 3 items run in parallel">
-          🤖 Generate KDDs with AI
+          &gt;&nbsp;&nbsp;Generate KDDs with AI
         </button>
       </div>
       <div style="font-size:11.5px;color:var(--text-muted);text-align:center;margin-top:5px">
@@ -372,8 +945,75 @@ async function pagKDD() {
 }
 
 function bindKDD() {
-  window._kddSelected = new Map(); // id → { id, name, lob }
-  window._kddAllItems = [];
+  window._kddSelected   = new Map(); // id → { id, name, lob }
+  window._kddAllItems   = [];
+  window._kddRegion     = "";
+  window._kddCountry    = "";
+  window._kddCountryMap = window._kddCountryMapData || {};
+
+  // ── Country / Region helpers ──────────────────────────────────────────────────
+
+  function _itemAvailableInFilter(item) {
+    if (!_kddCountry && !_kddRegion) return true;
+    const c = item.countries || {};
+    if (_kddCountry) return Object.values(c).some(arr => arr.includes(_kddCountry));
+    return _kddRegion in c;
+  }
+
+  async function _updateCountryInfo() {
+    const el = document.getElementById("kdd-country-info");
+    if (!el) return;
+    if (!_kddCountry && !_kddRegion) { el.textContent = ""; return; }
+    const label = _kddCountry || _kddRegion;
+    try {
+      const q   = _kddCountry ? `country=${encodeURIComponent(_kddCountry)}` : `region=${encodeURIComponent(_kddRegion)}`;
+      const res = await api.get(`/api/catalog/country-stats?${q}`);
+      el.textContent = `${res.available} of ${res.total} scope items available for ${label}`;
+    } catch (_) {
+      el.textContent = `Filtering by: ${label}`;
+    }
+  }
+
+  async function _updateLobCounts() {
+    const lobEl = document.getElementById("kdd-lob");
+    if (!lobEl) return;
+    const currentLob = lobEl.value;
+    let url = "/api/catalog/lobs";
+    if (_kddCountry)     url += `?country=${encodeURIComponent(_kddCountry)}`;
+    else if (_kddRegion) url += `?region=${encodeURIComponent(_kddRegion)}`;
+    try {
+      const lobs = await api.get(url);
+      const opts = lobs.map(l =>
+        `<option value="${l.name}"${l.name === currentLob ? " selected" : ""}>${l.name} (${l.count})</option>`
+      ).join("");
+      lobEl.innerHTML = `<option value="">— select LOB —</option>` + opts;
+    } catch (_) {}
+  }
+
+  window.kddRegionChange = async (region) => {
+    _kddRegion  = region;
+    _kddCountry = "";
+    const countryEl = document.getElementById("kdd-country");
+    if (!region) {
+      countryEl.innerHTML = `<option value="">— Select region first —</option>`;
+      countryEl.disabled  = true;
+    } else {
+      const countries = _kddCountryMap[region] || [];
+      countryEl.innerHTML = `<option value="">— All countries in ${region} —</option>` +
+        countries.map(c => `<option value="${c}">${c}</option>`).join("");
+      countryEl.disabled = false;
+    }
+    renderItemList(_kddAllItems);
+    _updateCountryInfo();
+    await _updateLobCounts();
+  };
+
+  window.kddCountryChange = async (country) => {
+    _kddCountry = country;
+    renderItemList(_kddAllItems);
+    _updateCountryInfo();
+    await _updateLobCounts();
+  };
 
   window.prefillKDD = (id) => {
     document.getElementById("kdd-id-input").value = id;
@@ -452,10 +1092,10 @@ function bindKDD() {
   };
 
   window.kddFilter = (q) => {
-    const filtered = q
+    const textFiltered = q
       ? _kddAllItems.filter(i => i.id.toLowerCase().includes(q.toLowerCase()) || i.name.toLowerCase().includes(q.toLowerCase()))
       : _kddAllItems;
-    renderItemList(filtered);
+    renderItemList(textFiltered);
   };
 
   window.kddToggleItem = (id) => {
@@ -638,7 +1278,8 @@ function bindKDD() {
       const response = await fetch("/api/kdd/generate", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ client, project, scopeIds: ids, mode })
+        body:    JSON.stringify({ client, project, scopeIds: ids, mode,
+                   clientCountry: _kddCountry || "", clientRegion: _kddRegion || "" })
       });
 
       const reader  = response.body.getReader();
@@ -816,7 +1457,7 @@ function bindKDD() {
 
     } catch (e) {
       if (aiBtn) { aiBtn.disabled = false; aiBtn.innerHTML = "🤖 Generate KDDs with AI"; }
-      if (res) res.innerHTML = `<div class="alert alert-danger">⚠️ ${e.message}</div>`;
+      if (res) res.innerHTML = `<div class="alert alert-danger">⚠️ ${escHtml(e.message)}</div>`;
     }
   };
 
@@ -879,19 +1520,31 @@ function bindKDD() {
         }
       }
     } catch (e) {
-      if (row) row.innerHTML += `<span style="color:var(--danger);font-size:12px;margin-left:8px">Error: ${e.message}</span>`;
+      if (row) row.innerHTML += `<span style="color:var(--danger);font-size:12px;margin-left:8px">Error: ${escHtml(e.message)}</span>`;
     }
   };
 
   function renderItemList(items) {
     const el = document.getElementById("kdd-item-list");
-    if (!items.length) { el.innerHTML = `<div style="padding:12px 14px;color:var(--text-muted);font-size:13px">No items found</div>`; return; }
-    el.innerHTML = items.map(i => `
-      <div class="item-row ${_kddSelected.has(i.id) ? "checked" : ""}" onclick="kddToggleItem('${i.id}')">
-        <input type="checkbox" data-id="${i.id}" ${_kddSelected.has(i.id) ? "checked" : ""} onclick="event.stopPropagation();kddToggleItem('${i.id}')" />
-        <span class="item-id">${i.id}</span>
-        <span class="item-name">${i.name}</span>
-        <span class="item-lob">${i.lob}</span>
+    if (!el) return;
+    // Apply country/region filter on top of whatever list is passed in
+    const countryFiltered = (_kddCountry || _kddRegion)
+      ? items.filter(i => _itemAvailableInFilter(i))
+      : items;
+
+    if (!countryFiltered.length) {
+      const hint = (_kddCountry || _kddRegion)
+        ? `No items found for <strong>${_kddCountry || _kddRegion}</strong> in this LOB`
+        : "No items found";
+      el.innerHTML = `<div style="padding:12px 14px;color:var(--text-muted);font-size:13px">${hint}</div>`;
+      return;
+    }
+    el.innerHTML = countryFiltered.map(i => `
+      <div class="item-row ${_kddSelected.has(i.id) ? "checked" : ""}" onclick="kddToggleItem('${escHtml(i.id)}')">
+        <input type="checkbox" data-id="${escHtml(i.id)}" ${_kddSelected.has(i.id) ? "checked" : ""} onclick="event.stopPropagation();kddToggleItem('${escHtml(i.id)}')" />
+        <span class="item-id">${escHtml(i.id)}</span>
+        <span class="item-name">${escHtml(i.name)}</span>
+        <span class="item-lob">${escHtml(i.lob)}</span>
       </div>`).join("");
   }
 
@@ -1110,7 +1763,7 @@ function bindOutput() {
         msg.innerHTML = `<div class="alert alert-danger" style="margin-bottom:12px">⚠️ ${data.error}</div>`;
       }
     } catch (e) {
-      msg.innerHTML = `<div class="alert alert-danger" style="margin-bottom:12px">⚠️ ${e.message}</div>`;
+      msg.innerHTML = `<div class="alert alert-danger" style="margin-bottom:12px">⚠️ ${escHtml(e.message)}</div>`;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = "⬇ Export Full Cache (9,855 KDDs)"; }
       setTimeout(() => { msg.innerHTML = ""; }, 8000);
@@ -1272,7 +1925,7 @@ function bindSettings() {
         }
       }
     } catch (e) {
-      document.getElementById("reload-result").innerHTML = `<div class="alert alert-danger">⚠️ ${e.message}</div>`;
+      document.getElementById("reload-result").innerHTML = `<div class="alert alert-danger">⚠️ ${escHtml(e.message)}</div>`;
     }
 
     btn.disabled = false;
@@ -1292,7 +1945,7 @@ function bindSettings() {
       const text = await file.text();
       data = JSON.parse(text);
     } catch (e) {
-      resultEl.innerHTML = `<div class="alert alert-danger">❌ File is not valid JSON: ${e.message}</div>`;
+      resultEl.innerHTML = `<div class="alert alert-danger">❌ File is not valid JSON: ${escHtml(e.message)}</div>`;
       return;
     }
 
@@ -1979,7 +2632,7 @@ function bindGapAnalysis() {
       }
     } catch (e) {
       const out = document.getElementById("ai-output");
-      if (out) out.innerHTML = `<div class="alert alert-warning">⚠️ ${e.message}</div>`;
+      if (out) out.innerHTML = `<div class="alert alert-warning">⚠️ ${escHtml(e.message)}</div>`;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = "🤖 Run AI Analysis"; }
     }
@@ -2568,7 +3221,7 @@ function bindEditor() {
         if (el) el.innerHTML = `<div class="alert alert-danger">⚠️ ${data.error || "Export failed"}</div>`;
       }
     } catch (e) {
-      if (el) el.innerHTML = `<div class="alert alert-danger">⚠️ ${e.message}</div>`;
+      if (el) el.innerHTML = `<div class="alert alert-danger">⚠️ ${escHtml(e.message)}</div>`;
     }
     btn.disabled = false;
     btn.textContent = "⬇ Export Excel";
@@ -3133,7 +3786,7 @@ function bindEditor() {
         showToast(`⚠ Library save failed: ${data.error || "unknown error"}`, "warn");
       }
     } catch (e) {
-      showToast(`⚠ Library save error: ${e.message}`, "warn");
+      showToast(`⚠ Library save error: ${escHtml(e.message)}`, "warn");
     }
   }
 
@@ -3282,7 +3935,7 @@ function bindEditor() {
         el.innerHTML = `<div class="alert alert-danger">⚠️ ${data.error || "Export failed"}</div>`;
       }
     } catch (e) {
-      el.innerHTML = `<div class="alert alert-danger">⚠️ ${e.message}</div>`;
+      el.innerHTML = `<div class="alert alert-danger">⚠️ ${escHtml(e.message)}</div>`;
     }
     btn.disabled = false;
     btn.textContent = "⬇ Export Excel";
@@ -3533,7 +4186,7 @@ function bindEditor() {
         }
       }
     } catch (e) {
-      el.innerHTML = `<div class="alert alert-danger">⚠️ ${e.message}</div>`;
+      el.innerHTML = `<div class="alert alert-danger">⚠️ ${escHtml(e.message)}</div>`;
     }
 
     btn.disabled = false;
@@ -3596,7 +4249,7 @@ function bindEditor() {
       btn.textContent = fromLib ? "💡 Suggest Again (instant)" : "💡 Suggest Again";
     } catch (e) {
       clearInterval(timerInterval);
-      cardsEl.innerHTML = `<div style="color:#dc2626;font-size:12px;padding:4px">⚠ ${e.message}</div>`;
+      cardsEl.innerHTML = `<div style="color:#dc2626;font-size:12px;padding:4px">⚠ ${escHtml(e.message)}</div>`;
       btn.disabled = false;
       btn.textContent = "💡 Suggest Decisions";
     }
@@ -3774,7 +4427,7 @@ function bindEditor() {
       btn.disabled = false;
     } catch (e) {
       clearInterval(timerInterval);
-      cardsEl.innerHTML = `<div style="color:#f87171;font-size:12px">⚠ ${e.message}</div>`;
+      cardsEl.innerHTML = `<div style="color:#f87171;font-size:12px">⚠ ${escHtml(e.message)}</div>`;
       btn.textContent = "💡 Suggest Decisions";
       btn.disabled = false;
     }
@@ -4056,7 +4709,7 @@ function bindDecisionLibrary() {
         if (msg) { msg.style.color = "var(--warning)"; msg.textContent = `⚠ ${data.error || data.message}`; }
       }
     } catch (e) {
-      if (msg) { msg.style.color = "var(--danger)"; msg.textContent = `⚠ ${e.message}`; }
+      if (msg) { msg.style.color = "var(--danger)"; msg.textContent = `⚠ ${escHtml(e.message)}`; }
     } finally {
       if (btn)      { btn.disabled = false;      btn.textContent = "🔄 Sync"; }
       if (emptyBtn) { emptyBtn.disabled = false; emptyBtn.textContent = "🔄 Sync Approved Decisions"; }
@@ -4092,7 +4745,7 @@ function bindDecisionLibrary() {
         alert(`Error: ${data.error || "Could not clear decisions"}`);
       }
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      alert(`Error: ${escHtml(e.message)}`);
     }
   };
 }
@@ -4279,28 +4932,30 @@ function bindMCPServer() {
 async function pagBDCQ() {
   const s = await api.get("/api/bdcq/status").catch(() => ({ found: false }));
 
-  // ── Source card content ─────────────────────────────────────────────────────
+  // ── Source strip (slim when loaded, upload zone when not) ──────────────────
   const sourceCard = s.found
-    ? `<div class="alert alert-success" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <span>
-          <strong>bdcq-questions.json loaded</strong> &nbsp;·&nbsp;
+    ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;
+                   background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;
+                   padding:6px 10px;margin-bottom:12px;font-size:12px;flex-wrap:wrap">
+        <span style="color:#166534">
+          ✓ <strong>bdcq-questions.json</strong> &nbsp;·&nbsp;
           ${s.totalDomains} domain${s.totalDomains !== 1 ? "s" : ""} &nbsp;·&nbsp;
           ${(s.totalQuestions || 0).toLocaleString()} questions
-          ${s.generatedAt ? `&nbsp;·&nbsp; generated ${s.generatedAt.slice(0,10)}` : ""}
+          ${s.generatedAt ? `&nbsp;·&nbsp; ${s.generatedAt.slice(0,10)}` : ""}
         </span>
-        <label style="font-size:12px;color:var(--accent);cursor:pointer;white-space:nowrap">
-          Replace file
+        <label style="font-size:11px;color:var(--accent);cursor:pointer;white-space:nowrap;font-weight:600">
+          ↺ Replace
           <input id="bdcq-replace-input" type="file" accept=".json" style="display:none" onchange="bdcqUploadFile(this.files[0])">
         </label>
       </div>`
-    : `<div id="bdcq-upload-zone" class="upload-zone" style="border:2px dashed var(--border);border-radius:8px;padding:40px;text-align:center;cursor:pointer;transition:border-color .2s"
+    : `<div id="bdcq-upload-zone" style="border:2px dashed var(--border);border-radius:8px;padding:32px;text-align:center;cursor:pointer;transition:border-color .2s;margin-bottom:12px"
           ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
           ondragleave="this.style.borderColor='var(--border)'"
           ondrop="event.preventDefault();this.style.borderColor='var(--border)';bdcqDropFile(event.dataTransfer.files[0])"
           onclick="document.getElementById('bdcq-file-input').click()">
-        <div style="font-size:32px;margin-bottom:8px">⊟</div>
-        <div style="font-weight:600;margin-bottom:4px">Drop bdcq-questions.json here</div>
-        <div style="font-size:13px;color:var(--text-muted)">or click to browse — generated by the SAPDeckAgent Chrome extension from SAP Roadmap Viewer</div>
+        <div style="font-size:28px;margin-bottom:6px">⊟</div>
+        <div style="font-weight:600;margin-bottom:3px">Drop bdcq-questions.json here</div>
+        <div style="font-size:12px;color:var(--text-muted)">or click to browse — generated by the SAPDeckAgent Chrome extension from SAP Roadmap Viewer</div>
         <input id="bdcq-file-input" type="file" accept=".json" style="display:none" onchange="bdcqUploadFile(this.files[0])">
       </div>`;
 
@@ -4311,24 +4966,24 @@ async function pagBDCQ() {
   // ── Country checkboxes ──────────────────────────────────────────────────────
   const countries = s.countries || [];
   const countrySection = countries.length > 0
-    ? `<div class="section-divider">Countries / Localisation</div>
-       <div class="form-group">
-         <div class="form-label">Include locale sheets</div>
-         <div style="margin-bottom:6px">
+    ? `<div class="section-divider" style="margin:8px 0 6px">Countries / Localisation</div>
+       <div style="margin-bottom:8px">
+         <div class="form-label" style="margin-bottom:4px">Include locale sheets</div>
+         <div>
            ${countries.map(c => `
-             <label style="display:inline-flex;align-items:center;gap:6px;margin:4px 8px 4px 0;font-size:13px">
+             <label style="display:inline-flex;align-items:center;gap:5px;margin:2px 8px 2px 0;font-size:12px">
                <input type="checkbox" class="bdcq-country-check" value="${c}"> ${c}
              </label>`).join("")}
          </div>
-         <div class="form-hint">Leave all unchecked to include global sheets only</div>
+         <div class="form-hint" style="margin-top:3px">Leave all unchecked to include global sheets only</div>
        </div>`
     : "";
 
   // ── Domain multi-select — inline collapsible list ───────────────────────────
   const domainSection = s.found && window._bdcqDomainMeta.length > 0
-    ? `<div class="section-divider">BDCQ Files</div>
-       <div class="form-group">
-         <div class="form-label">Select domains to include</div>
+    ? `<div class="section-divider" style="margin:8px 0 6px">BDCQ Files</div>
+       <div style="margin-bottom:8px">
+         <div class="form-label" style="margin-bottom:4px">Select domains to include</div>
 
          <!-- Trigger row -->
          <button id="bdcq-domain-trigger" onclick="bdcqToggleDropdown()"
@@ -4373,28 +5028,45 @@ async function pagBDCQ() {
     : "";
 
   return `
-    <div class="page-header">
-      <div class="page-title">BDCQ Agent</div>
-      <div class="page-sub">Business Driven Configuration Questionnaire · SAP S/4HANA Cloud PE</div>
+    <div style="background:linear-gradient(135deg,#460073 0%,#A100FF 100%);
+                border-radius:10px;padding:16px 22px;margin-bottom:10px;
+                display:flex;align-items:center;gap:16px">
+      <div style="font-size:36px;font-weight:900;color:#A100FF;line-height:1;
+                  text-shadow:0 0 20px rgba(161,0,255,0.5)">📋</div>
+      <div>
+        <div style="color:#fff;font-size:20px;font-weight:700;letter-spacing:-0.3px">
+          BDCQ Enricher</div>
+        <div style="color:#E0C8FF;font-size:12px;margin-top:2px">
+          Accenture · SAP S/4HANA Cloud Public Edition · Explore Phase</div>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div style="color:#E0C8FF;font-size:11px">Enriched with</div>
+        <div style="display:flex;gap:6px;margin-top:3px;flex-wrap:wrap;justify-content:flex-end">
+          <span style="background:rgba(255,255,255,${s.found ? "0.25" : "0.10"});color:${s.found ? "#fff" : "rgba(255,255,255,0.5)"};padding:2px 10px;border-radius:12px;font-size:11px">
+            ${s.found ? "✓" : "⚠"} BDCQ Files</span>
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">🌍 Country Rules</span>
+          <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">✦ Claude AI</span>
+        </div>
+      </div>
     </div>
 
     <!-- ── Tab bar ─────────────────────────────────────────────────────────────── -->
-    <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:18px">
+    <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:10px">
       <button id="bdcq-tab-configure" onclick="bdcqSwitchTab('configure')"
-        style="padding:10px 20px;font-size:13px;font-weight:600;border:none;cursor:pointer;
+        style="padding:7px 16px;font-size:13px;font-weight:600;border:none;cursor:pointer;
                background:none;border-bottom:2px solid var(--accent);color:var(--accent);
                margin-bottom:-2px;transition:color .15s">
         ⚙️ Configure
       </button>
       <button id="bdcq-tab-grounding" onclick="bdcqSwitchTab('grounding')"
-        style="padding:10px 20px;font-size:13px;font-weight:600;border:none;cursor:pointer;
+        style="padding:7px 16px;font-size:13px;font-weight:600;border:none;cursor:pointer;
                background:none;border-bottom:2px solid transparent;color:var(--text-muted);
                margin-left:0;position:relative">
-        ◈ Grounding <span id="bdcq-grounding-badge" style="display:none;position:absolute;top:6px;right:4px;
+        ◈ Grounding <span id="bdcq-grounding-badge" style="display:none;position:absolute;top:4px;right:4px;
           width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>
       </button>
       <button id="bdcq-tab-editor" onclick="bdcqSwitchTab('editor')" disabled
-        style="padding:10px 20px;font-size:13px;font-weight:600;border:none;cursor:not-allowed;
+        style="padding:7px 16px;font-size:13px;font-weight:600;border:none;cursor:not-allowed;
                background:none;border-bottom:2px solid transparent;color:var(--text-muted);
                margin-bottom:-2px;transition:color .15s;opacity:.5">
         📋 Editor
@@ -4404,150 +5076,158 @@ async function pagBDCQ() {
     <!-- ══ CONFIGURE TAB ════════════════════════════════════════════════════════ -->
     <div id="bdcq-panel-configure">
 
-    <div class="card">
-      <div class="card-title">Source — bdcq-questions.json</div>
+    <div class="card" style="padding:14px 16px">
       ${sourceCard}
-    </div>
 
-    <div class="card">
-      <div class="card-title">Configuration</div>
-
-      <div class="section-divider">Project Details</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group">
+      <!-- Project Details: 2-col tight row -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div>
           <label class="form-label">Client Name</label>
           <input id="bdcq-client" class="form-input" type="text" placeholder="e.g. Acme Corp">
         </div>
-        <div class="form-group">
-          <label class="form-label">Output File Name <span style="color:#f87171">*</span></label>
+        <div>
+          <label class="form-label">Output File Name <span style="color:#f87171">*</span> <span style="font-weight:400;color:var(--text-muted);font-size:11px">.xlsx</span></label>
           <input id="bdcq-filename" class="form-input" type="text" placeholder="e.g. Acme_BDCQ_Finance">
-          <div class="form-hint">.xlsx added automatically</div>
         </div>
       </div>
 
-      <div class="section-divider">Scope Filter <span style="font-weight:400;color:var(--text-muted)">(optional)</span></div>
-      <div class="form-group">
-        <label class="form-label">Scope Item IDs — from DDA</label>
-        <div style="display:flex;gap:8px;align-items:flex-start">
-          <textarea id="bdcq-scope" class="form-input" rows="2"
-            placeholder="e.g. BD6, J59, BEI — comma or space separated"
-            style="resize:vertical;flex:1"></textarea>
-          <button class="btn btn-outline btn-sm" style="white-space:nowrap;padding:7px 12px;margin-top:1px"
+      <!-- Scope Filter: single-line + file upload + domain finder -->
+      <div style="margin-bottom:8px">
+        <label class="form-label">Scope IDs from DDA <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional — auto-selects domains)</span></label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="bdcq-scope" class="form-input" type="text"
+            placeholder="e.g. BD6, J59, BEI — or upload your DDA file →"
+            style="flex:1">
+          <!-- DDA file upload -->
+          <label title="Upload DDA Excel or PDF to extract scope IDs automatically"
+                 style="display:flex;align-items:center;gap:4px;padding:5px 10px;
+                        border:1px solid var(--border);border-radius:6px;font-size:12px;
+                        cursor:pointer;white-space:nowrap;color:var(--text-muted);
+                        background:var(--surface-2);transition:border-color .2s;user-select:none"
+                 onmouseover="this.style.borderColor='var(--accent);this.style.color=var(--accent)'"
+                 onmouseout="this.style.borderColor='var(--border);this.style.color=var(--text-muted)'">
+            <span id="bdcq-dda-upload-label">📎 DDA file</span>
+            <input id="bdcq-dda-input" type="file" accept=".xlsx,.xls,.xlsm,.pdf"
+                   style="display:none" onchange="bdcqExtractDDA(this.files[0])">
+          </label>
+          <button class="btn btn-outline btn-sm" style="white-space:nowrap;padding:5px 10px;font-size:12px"
             onclick="bdcqLookupScope()" title="Auto-select matching BDCQ domains">
             Find Domains →
           </button>
         </div>
-        <div class="form-hint">From DDA confirmed scope — auto-selects matching domains below. Leave blank to select domains manually.</div>
-        <div id="bdcq-scope-lookup-result" style="margin-top:6px"></div>
+        <div id="bdcq-scope-lookup-result" style="margin-top:4px"></div>
       </div>
 
       ${domainSection}
 
       <div id="bdcq-col-section" style="display:none">
-        <div class="section-divider">Columns</div>
-        <div class="form-group">
-          <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
-            <button class="btn btn-outline btn-sm" style="font-size:12px;padding:4px 10px" onclick="bdcqColAll(true)">Select All</button>
-            <button class="btn btn-outline btn-sm" style="font-size:12px;padding:4px 10px" onclick="bdcqColAll(false)">Clear All</button>
-          </div>
-          <div id="bdcq-col-list"></div>
-          <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
-            <input id="bdcq-custom-col" class="form-input" type="text"
-              placeholder="Add custom column…" style="max-width:240px;font-size:13px">
-            <button class="btn btn-outline btn-sm" style="font-size:12px;padding:4px 10px;white-space:nowrap"
-              onclick="bdcqAddCustomCol()">+ Add</button>
-          </div>
-          <div class="form-hint">Custom columns appear in the Excel but will be empty — ready for manual fill-in.</div>
+        <div class="section-divider" style="margin:6px 0 6px">Columns</div>
+        <div style="margin-bottom:6px;display:flex;gap:6px;align-items:center">
+          <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px" onclick="bdcqColAll(true)">Select All</button>
+          <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px" onclick="bdcqColAll(false)">Clear All</button>
         </div>
+        <div id="bdcq-col-list"></div>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:6px">
+          <input id="bdcq-custom-col" class="form-input" type="text"
+            placeholder="Add custom column…" style="max-width:220px;font-size:12px;padding:5px 8px">
+          <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px;white-space:nowrap"
+            onclick="bdcqAddCustomCol()">+ Add</button>
+        </div>
+        <div class="form-hint" style="margin-top:3px">Custom columns appear in Excel empty — for manual fill-in.</div>
       </div>
 
       ${countrySection}
 
-      <div class="section-divider">AI Enrichment Context
-        <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:8px">
-          — controls <em>how</em> Claude enriches, not <em>which</em> questions are included
-        </span>
+      <!-- AI Enrichment Context — compact 3-col layout -->
+      <div class="section-divider" style="margin:8px 0 6px">
+        ✨ Enrichment Context
+        <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">industry &amp; countries frame Claude's answers (do not filter questions)</span>
       </div>
-      <div style="background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.25);border-radius:6px;
-                  padding:8px 12px;font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.5">
-        ⚠️ <strong>To control which questions are enriched</strong>, use the <strong>BDCQ Files</strong> domain selector above — select only the domains in your project scope.
-        Industry and Countries here only add localisation context to Claude's answers; they do not filter questions.
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group">
-          <label class="form-label">Industry <span style="color:var(--text-muted);font-weight:400">(for ✨ Enrich)</span></label>
-          <select id="bdcq-industry" class="form-input" style="font-size:13px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div>
+          <label class="form-label">Industry</label>
+          <select id="bdcq-industry" class="form-input">
             <option value="">— Select industry —</option>
-            <option value="manufacturing">Manufacturing</option>
             <option value="retail">Retail</option>
-            <option value="professional services">Professional Services</option>
+            <option value="consumer goods">Consumer Goods / FMCG</option>
+            <option value="chemicals">Chemicals / Process Industries</option>
+            <option value="automotive">Automotive</option>
             <option value="pharma">Pharma / Life Sciences</option>
-            <option value="utilities">Utilities</option>
-            <option value="financial services">Financial Services</option>
-            <option value="oil & gas">Oil &amp; Gas</option>
+            <option value="healthcare">Healthcare / MedTech</option>
             <option value="high tech">High Tech</option>
+            <option value="financial services">Financial Services</option>
+            <option value="utilities">Utilities</option>
+            <option value="oil & gas">Oil &amp; Gas</option>
           </select>
-          <div class="form-hint">Frames enriched answers for your client's vertical</div>
           <div id="bdcq-domain-suggest" style="display:none"></div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Countries in scope <span style="color:var(--text-muted);font-weight:400">(for ✨ Enrich)</span></label>
-          <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:110px;overflow-y:auto;background:var(--surface-2)">
-            ${["India","Germany","USA","UK","Brazil","UAE","Saudi Arabia","France","Australia","Singapore"].map(c => `
-              <label style="display:flex;align-items:center;gap:6px;margin:2px 0;font-size:12px;cursor:pointer">
-                <input type="checkbox" class="bdcq-enrich-country" value="${c}" style="accent-color:var(--accent)"> ${c}
+        <div>
+          <label class="form-label">Countries in scope</label>
+          <div style="border:1px solid var(--border);border-radius:6px;padding:6px 8px;max-height:120px;overflow-y:auto;background:var(--surface-2);display:grid;grid-template-columns:1fr 1fr;gap:0 6px">
+            ${[
+              "Argentina","Australia","Austria","Belgium","Brazil","Canada","China",
+              "Denmark","Finland","France","Germany","India","Indonesia","Ireland",
+              "Italy","Japan","Kuwait","Malaysia","Mexico","Netherlands","New Zealand",
+              "Norway","Oman","Poland","Portugal","Qatar","Saudi Arabia","Singapore",
+              "South Africa","South Korea","Spain","Sweden","Switzerland","Taiwan",
+              "UAE","UK","USA","Vietnam"
+            ].map(c => `
+              <label style="display:flex;align-items:center;gap:4px;margin:1px 0;font-size:11px;cursor:pointer;white-space:nowrap;overflow:hidden">
+                <input type="checkbox" class="bdcq-enrich-country" value="${c}" style="accent-color:var(--accent);flex-shrink:0"> ${c}
               </label>`).join("")}
           </div>
-          <div class="form-hint">Adds statutory requirements (GST, GoBD, MTD, ZATCA…) to enriched answers</div>
         </div>
       </div>
 
-      <div class="section-divider" style="margin-top:18px">Cover Sheet <span style="font-weight:400;color:var(--text-muted)">(optional)</span></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group">
-          <label class="form-label">Client Logo</label>
-          <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;
-                         border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:12px;
-                         color:var(--text-muted);transition:border-color .2s"
-                 onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-            <span id="bdcq-client-logo-label">⊕ Upload logo (PNG/JPG)</span>
-            <input id="bdcq-client-logo" type="file" accept="image/png,image/jpeg" style="display:none"
-              onchange="bdcqLogoChange('client',this)">
-          </label>
+      <!-- Cover Sheet — collapsible -->
+      <details style="margin-top:10px">
+        <summary style="font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer;
+                         padding:5px 0;border-top:1px solid var(--border);list-style:none;
+                         display:flex;align-items:center;gap:6px">
+          <span style="font-size:10px">▶</span> Cover Sheet <span style="font-weight:400">(optional — logos &amp; intro text)</span>
+        </summary>
+        <div style="padding-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label class="form-label">Client Logo</label>
+            <label style="display:flex;align-items:center;gap:6px;padding:6px 8px;
+                           border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:12px;
+                           color:var(--text-muted);transition:border-color .2s"
+                   onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+              <span id="bdcq-client-logo-label">⊕ Upload logo (PNG/JPG)</span>
+              <input id="bdcq-client-logo" type="file" accept="image/png,image/jpeg" style="display:none"
+                onchange="bdcqLogoChange('client',this)">
+            </label>
+          </div>
+          <div>
+            <label class="form-label">Partner Logo</label>
+            <label style="display:flex;align-items:center;gap:6px;padding:6px 8px;
+                           border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:12px;
+                           color:var(--text-muted);transition:border-color .2s"
+                   onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+              <span id="bdcq-partner-logo-label">⊕ Upload logo (PNG/JPG)</span>
+              <input id="bdcq-partner-logo" type="file" accept="image/png,image/jpeg" style="display:none"
+                onchange="bdcqLogoChange('partner',this)">
+            </label>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Partner Logo</label>
-          <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;
-                         border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:12px;
-                         color:var(--text-muted);transition:border-color .2s"
-                 onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-            <span id="bdcq-partner-logo-label">⊕ Upload logo (PNG/JPG)</span>
-            <input id="bdcq-partner-logo" type="file" accept="image/png,image/jpeg" style="display:none"
-              onchange="bdcqLogoChange('partner',this)">
-          </label>
+        <div style="margin-top:6px">
+          <label class="form-label">Cover Sheet Overview Text</label>
+          <textarea id="bdcq-overview" class="form-input" rows="2"
+            placeholder="e.g. This questionnaire covers configuration decisions for the SAP S/4HANA Cloud PE implementation at Acme Corp."
+            style="resize:vertical"></textarea>
         </div>
-      </div>
-      <div class="form-group" style="margin-top:10px">
-        <label class="form-label">Cover Sheet Overview Text</label>
-        <textarea id="bdcq-overview" class="form-input" rows="2"
-          placeholder="e.g. This questionnaire covers configuration decisions for the SAP S/4HANA Cloud PE implementation at Acme Corp."
-          style="resize:vertical;font-size:13px"></textarea>
-        <div class="form-hint">Appears on the cover sheet. Leave blank for default text.</div>
-      </div>
+      </details>
 
-      <div style="margin-top:6px;font-size:11px;color:var(--text-muted)">
-        * Select at least one domain before generating
-      </div>
-      <div style="margin-top:8px;display:flex;gap:10px">
-        <button class="btn btn-primary" style="flex:1;padding:12px" onclick="bdcqLoadEditor()">
-          Generate &amp; Edit
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary btn-generate" style="flex:1;padding:13px 16px" onclick="bdcqLoadEditor()">
+          &gt;&nbsp;&nbsp;Generate &amp; Edit
         </button>
-        <button class="btn btn-outline" style="padding:12px 18px;white-space:nowrap" onclick="bdcqGenerate()"
+        <button class="btn btn-outline" style="padding:10px 14px;white-space:nowrap;font-size:13px;font-weight:600;border-radius:10px" onclick="bdcqGenerate()"
           title="Skip editor — generate and download Excel directly">
           Quick Export ↓
         </button>
       </div>
-      <div id="bdcq-result" style="margin-top:14px"></div>
+      <div id="bdcq-result" style="margin-top:10px"></div>
     </div>
 
     </div><!-- /bdcq-panel-configure -->
@@ -5066,6 +5746,43 @@ function bindBDCQ() {
   // Load grounding status on page init
   bdcqGroundingRefresh();
 
+  // ── DDA file upload → extract scope IDs ─────────────────────────────────────
+  window.bdcqExtractDDA = async (file) => {
+    if (!file) return;
+    const resultEl = document.getElementById("bdcq-scope-lookup-result");
+    const labelEl  = document.getElementById("bdcq-dda-upload-label");
+    if (resultEl) resultEl.innerHTML = `<span style="font-size:12px;color:var(--text-muted)">⏳ Reading ${file.name}…</span>`;
+    if (labelEl)  labelEl.textContent = "⏳ Reading…";
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const r = await fetch("/api/bdcq/dda-extract", { method: "POST", body: form });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || "Extract failed");
+
+      const scopeEl = document.getElementById("bdcq-scope");
+      if (scopeEl) scopeEl.value = data.ids.join(", ");
+
+      const byLob = {};
+      (data.items || []).forEach(it => { byLob[it.lob] = (byLob[it.lob] || 0) + 1; });
+      const lobSummary = Object.entries(byLob).map(([l,n]) => `${l} (${n})`).join(", ");
+
+      if (resultEl) resultEl.innerHTML = data.count === 0
+        ? `<span style="color:var(--text-muted);font-size:12px">No recognised scope IDs found in <em>${file.name}</em>. Try pasting IDs manually.</span>`
+        : `<span style="color:#16a34a;font-size:12px">✓ Extracted <strong>${data.count} scope IDs</strong> from <em>${file.name}</em>
+           ${lobSummary ? `<br><span style="color:var(--text-muted)">${lobSummary}</span>` : ""}
+           — click <strong>Find Domains →</strong> to auto-select</span>`;
+
+      if (labelEl) labelEl.textContent = `📎 ${file.name.length > 20 ? file.name.slice(0,18)+"…" : file.name}`;
+      // Reset file input so the same file can be re-uploaded if needed
+      const inp = document.getElementById("bdcq-dda-input");
+      if (inp) inp.value = "";
+    } catch (err) {
+      if (resultEl) resultEl.innerHTML = `<span style="color:#f87171;font-size:12px">❌ ${err.message}</span>`;
+      if (labelEl)  labelEl.textContent = "📎 DDA file";
+    }
+  };
+
   // ── Scope ID → Domain auto-select (DDA optional) ────────────────────────────
   window.bdcqLookupScope = async () => {
     const scopeRaw  = (document.getElementById("bdcq-scope")?.value || "").trim();
@@ -5157,10 +5874,11 @@ function bindBDCQ() {
       window._bdcqEditorState.questionCol = r.questionCol;
       const _qCol = r.questionCol || "Question";
       const INDUSTRY_LABELS = {
-        "manufacturing": "Manufacturing", "retail": "Retail",
-        "professional services": "Professional Services", "pharma": "Pharma / Life Sciences",
-        "utilities": "Utilities", "financial services": "Financial Services",
-        "oil & gas": "Oil & Gas", "high tech": "High Tech",
+        "retail": "Retail", "consumer goods": "Consumer Goods / FMCG",
+        "chemicals": "Chemicals / Process Industries", "automotive": "Automotive",
+        "pharma": "Pharma / Life Sciences", "healthcare": "Healthcare / MedTech",
+        "high tech": "High Tech", "financial services": "Financial Services",
+        "utilities": "Utilities", "oil & gas": "Oil & Gas",
       };
       const _industryRaw   = document.getElementById("bdcq-industry")?.value || "";
       const _industryLabel = INDUSTRY_LABELS[_industryRaw] || _industryRaw;
@@ -5511,10 +6229,11 @@ function bindBDCQ() {
         // Inject rows into editor state — align with regular row schema
         const _qCol2 = window._bdcqEditorState.questionCol || "Question";
         const _INDUSTRY_LABELS = {
-          "manufacturing": "Manufacturing", "retail": "Retail",
-          "professional services": "Professional Services", "pharma": "Pharma / Life Sciences",
-          "utilities": "Utilities", "financial services": "Financial Services",
-          "oil & gas": "Oil & Gas", "high tech": "High Tech",
+          "retail": "Retail", "consumer goods": "Consumer Goods / FMCG",
+          "chemicals": "Chemicals / Process Industries", "automotive": "Automotive",
+          "pharma": "Pharma / Life Sciences", "healthcare": "Healthcare / MedTech",
+          "high tech": "High Tech", "financial services": "Financial Services",
+          "utilities": "Utilities", "oil & gas": "Oil & Gas",
         };
         const _industryNorm = _INDUSTRY_LABELS[(industry || "").toLowerCase()] || industry || "";
         const newRows = (r.rows || []).map(row => ({
@@ -5833,4 +6552,1775 @@ function bindBDCQ() {
       if (resultEl) resultEl.innerHTML = `<div class="alert alert-warning">Error: ${err.message}</div>`;
     }
   };
+}
+
+
+// ── BPD AGENT page ─────────────────────────────────────────────────────────────
+// Faithful port of BPD_L1-L5_updated.jsx to vanilla JS / app.js SPA pattern
+
+const _BPD_MODULES = ["Sales & Distribution","Finance & Controlling","Sourcing & Procurement","Manufacturing","Asset Management","Supply Chain","Human Resources","Professional Services","Customer Service","R&D & Engineering","Cross-Functional"];
+
+// Module-specific coverage areas for FTS rule (4) — never hardcode SD terms for other modules
+const _BPD_FTS_COVERAGE = {
+  "Sales & Distribution":    "order management, pricing, shipping/delivery, billing, payment, output management, credit management, authorisation",
+  "Finance & Controlling":   "journal entry, clearing, payment runs, bank reconciliation, period-end closing, tax, cost allocation, reporting",
+  "Sourcing & Procurement":  "purchase requisition, purchase order, goods receipt, invoice verification, supplier evaluation, payment terms, contracts",
+  "Manufacturing":           "production order, capacity planning, goods movements, backflushing, quality inspection, batch management, MRP",
+  "Asset Management":        "asset creation, depreciation, maintenance order, equipment master, functional location, PM notification, plant maintenance",
+  "Supply Chain":            "demand planning, stock transfer, inventory management, warehouse management, goods issue, goods receipt, physical inventory",
+  "Human Resources":         "employee master data, payroll, time recording, leave management, organisational assignment, benefits, travel expense",
+  "Professional Services":   "project creation, resource assignment, time confirmation, billing milestone, project cost, revenue recognition, WBS",
+  "Customer Service":        "service order, service contract, SLA, repair order, field service, spare parts, customer complaint, warranty",
+  "R&D & Engineering":       "product development, engineering change management, classification, document management, BOM, routing, specification",
+  "Cross-Functional":        "master data governance, output management, workflow, authorisation, integration, reporting, data migration",
+};
+function _bpdFtsCoverage(module) {
+  return _BPD_FTS_COVERAGE[module] || "all functional areas relevant to the scope items provided";
+}
+
+const _BPD_PC_RULES = `SAP S/4HANA PUBLIC CLOUD rules — MANDATORY for every output:
+- No T-codes (VA01, ME21N, FB01 etc.) — use Fiori app name + (F-ID) e.g. Manage Journal Entries (F1348)
+- No SPRO/IMG — use "Business Configuration > Area > Activity"
+- No RFC/BAPI — use OData API via SAP Integration Suite CPI
+- No Z-programs/Z-tables — use CFL (Tier-1) / BAS-RAP (Tier-2) / BTP CAP (Tier-3)
+- All roles: SAP_BR_ prefix, assigned via Manage Business Users (F2709)
+- Integration: SAP Integration Suite CPI only
+- Migration: Migrate Your Data Fiori app only (no LSMW)
+- Monitoring: SAP Cloud ALM (no Solution Manager)
+- Background jobs: Application Jobs (F3508) (no SM36/SM37)`;
+
+// BPD state
+window._bpd = {
+  form: { description:"", projectName:"", client:"", module:"Sales & Distribution", inScope:"", stakeholders:"", integrations:"" },
+  data: null, progress: 0, activeTab:"full",
+  autoFillTimer: null, autoFilled: new Set(),
+  selectedIds: [],     // scope item IDs chosen in the catalog picker
+  catalogData: null,   // response from /api/bpd/catalog-context
+  matchTimer:  null,   // debounce for auto-match
+  abortCtrl:   null    // AbortController for in-flight generation
+};
+
+async function pagBPD() {
+  const modOpts = _BPD_MODULES.map(m => `<option value="${escHtml(m)}">${escHtml(m)}</option>`).join("");
+  return `
+    <div id="bpd-wrap">
+      <style>
+        #bpd-wrap .bpd-tab-btn { padding:10px 16px;font-size:12px;font-weight:600;cursor:pointer;border:none;background:transparent;color:var(--text-muted);border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap }
+        #bpd-wrap .bpd-tab-btn.active { background:rgba(161,0,255,0.08);color:var(--accent);border-bottom:2px solid var(--accent) }
+        @keyframes bpd-spin { to { transform:rotate(360deg) } }
+      </style>
+
+      <!-- ── INPUT PHASE ── -->
+      <div id="bpd-input-view">
+
+        <!-- Header -->
+        <div style="background:linear-gradient(135deg,#460073 0%,#A100FF 100%);
+                    border-radius:10px;padding:20px 28px;margin-bottom:16px;
+                    display:flex;align-items:center;gap:18px">
+          <div style="font-size:40px;font-weight:900;color:rgba(255,255,255,0.3);line-height:1">◉</div>
+          <div>
+            <div style="color:#fff;font-size:20px;font-weight:700;letter-spacing:-0.3px">BPD Agent</div>
+            <div style="color:#E0C8FF;font-size:12px;margin-top:2px">Accenture · SAP S/4HANA Cloud Public Edition · Business Process Documentation</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">&#9671; L2&#8211;L5 Hierarchy</span>
+            <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">&#9670; BPMN Swimlanes</span>
+            <span style="background:rgba(255,255,255,0.15);color:#fff;padding:2px 10px;border-radius:12px;font-size:11px">&#10022; Claude AI</span>
+          </div>
+        </div>
+
+        <div id="bpd-error-banner"></div>
+
+        <!-- 2-column layout -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:stretch">
+
+          <!-- LEFT: Process Description -->
+          <div class="card" style="padding:18px 20px;display:flex;flex-direction:column">
+            <div class="section-divider" style="margin-top:0;font-size:12px">
+              1 · Process Requirement
+              <span id="bpd-autofill-badge" style="display:none;margin-left:10px"></span>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+              <label class="btn btn-secondary" style="cursor:pointer;font-size:11px;padding:4px 10px;display:inline-flex;align-items:center;gap:5px">
+                &#128206; Upload
+                <input type="file" accept=".txt,.md,.doc,.docx" style="display:none" onchange="bpdHandleFile(this.files[0]);this.value=''">
+              </label>
+              <span style="font-size:10.5px;color:var(--text-muted)">.txt .md .docx</span>
+            </div>
+            <textarea id="bpd-desc" class="form-input" rows="7" style="resize:vertical;line-height:1.6;font-size:12.5px;flex:1"
+              placeholder="e.g. Implement Order-to-Cash in SAP S/4HANA Cloud PE for Acme Corp — sales order, delivery, billing, payment clearing. Integration with WMS via SAP CPI."
+              oninput="bpdOnDescInput(this.value)"></textarea>
+            <div id="bpd-desc-hint" style="font-size:10.5px;color:var(--text-muted);margin-top:4px">Minimum 20 characters to enable generation</div>
+          </div>
+
+          <!-- RIGHT: Scope Picker -->
+          <div class="card" style="padding:18px 20px;display:flex;flex-direction:column">
+            <div class="section-divider" style="margin-top:0;font-size:12px">
+              2 · Match SAP Scope Items
+              <span style="font-size:10px;color:var(--text-muted);font-weight:400;margin-left:5px">657 real processes · auto-matched</span>
+            </div>
+            <input id="bpd-scope-search" class="form-input" style="font-size:12px;margin-bottom:8px" placeholder="Search by name or ID (e.g. BD9, J11, invoice)&#8230;" oninput="bpdSearchScope(this.value)">
+            <div id="bpd-scope-list" style="border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg);flex:1;overflow-y:auto;min-height:120px">
+              <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 0">Describe your process &#8212; scope items will auto-match from the SAP catalog</div>
+            </div>
+            <div id="bpd-selected-count" style="font-size:10.5px;color:var(--text-muted);margin-top:5px"></div>
+          </div>
+
+          <!-- FULL WIDTH: Project Details -->
+          <div class="card" style="padding:18px 20px;grid-column:1 / -1">
+            <div class="section-divider" style="margin-top:0;font-size:12px">
+              3 · Project Details
+              <span style="font-size:10px;color:var(--text-muted);font-weight:400;margin-left:5px">auto-filled · editable</span>
+              <span id="bpd-step2-badge" style="display:none;margin-left:8px;background:#d4f6e8;color:#0FA968;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">Project Name</label>
+                <input id="bpd-projectName" class="form-input" style="font-size:12px" placeholder="Acme S4HC Wave 1" oninput="window._bpd.form.projectName=this.value">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">Client</label>
+                <input id="bpd-client" class="form-input" style="font-size:12px" placeholder="Acme Corporation" oninput="window._bpd.form.client=this.value">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">Line of Business</label>
+                <select id="bpd-module" class="form-select" style="font-size:12px" onchange="window._bpd.form.module=this.value;_bpdAutoMatch()">${modOpts}</select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">In-Scope Processes</label>
+                <input id="bpd-inScope" class="form-input" style="font-size:12px" placeholder="Sales order, delivery, billing" oninput="window._bpd.form.inScope=this.value">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">Stakeholders</label>
+                <input id="bpd-stakeholders" class="form-input" style="font-size:12px" placeholder="Sales Manager, Finance Lead" oninput="window._bpd.form.stakeholders=this.value">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">Integrations</label>
+                <input id="bpd-integrations" class="form-input" style="font-size:12px" placeholder="WMS, CRM via SAP CPI" oninput="window._bpd.form.integrations=this.value">
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /grid -->
+
+        <!-- Generate button -->
+        <div style="text-align:center;margin:18px 0 8px">
+          <button id="bpd-gen-btn" class="btn btn-primary btn-generate" style="opacity:0.5;cursor:not-allowed" disabled onclick="bpdGenerate()">
+            &gt;&nbsp;&nbsp;<span id="bpd-gen-label">Generate L2&#8211;L5 Documentation</span>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- ── LOADING PHASE ── -->
+      <div id="bpd-loading-view" style="display:none">
+        <div style="background:linear-gradient(135deg,#460073 0%,#A100FF 100%);
+                    border-radius:10px;padding:24px 28px;margin-bottom:22px;
+                    display:flex;align-items:center;gap:18px">
+          <div style="font-size:48px;font-weight:900;color:#A100FF;line-height:1;
+                      text-shadow:0 0 20px rgba(161,0,255,0.5)">◉</div>
+          <div>
+            <div style="color:#fff;font-size:22px;font-weight:700">BPD Agent — Generating</div>
+            <div style="color:#E0C8FF;font-size:13px;margin-top:3px">Building L2/L3/L4/L5 hierarchy · Swimlane diagrams · Fiori app mappings</div>
+          </div>
+        </div>
+        <div class="card" style="text-align:center;padding:36px 28px">
+          <div style="background:var(--bg);border-radius:8px;height:10px;overflow:hidden;margin-bottom:10px;max-width:480px;margin-left:auto;margin-right:auto">
+            <div id="bpd-prog-bar" style="height:10px;background:linear-gradient(90deg,#460073,#A100FF);border-radius:8px;width:0%;transition:width .4s"></div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:22px">
+            <div id="bpd-prog-pct" style="font-size:15px;color:var(--accent);font-weight:700">0%</div>
+            <div id="bpd-timer" style="font-size:13px;color:var(--text-muted);font-variant-numeric:tabular-nums">0s</div>
+          </div>
+          <div id="bpd-phase-list" style="display:flex;flex-direction:column;gap:5px;max-width:420px;margin:0 auto;text-align:left">
+            ${Array.from({length:9},(_,i)=>`
+              <div id="bpd-ph-${i}" style="display:flex;align-items:center;gap:8px;opacity:0.25;transition:opacity .5s;font-size:12px">
+                <span id="bpd-ph-ic-${i}" style="color:var(--text-muted);font-weight:700;width:14px;text-align:center">&#9675;</span>
+                <span id="bpd-ph-lbl-${i}" style="color:var(--text-muted)">Initialising&#8230;</span>
+              </div>`).join("")}
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RESULT PHASE ── -->
+      <div id="bpd-result-view" style="display:none">
+        <!-- Result header — same gradient -->
+        <div style="background:linear-gradient(135deg,#460073 0%,#A100FF 100%);
+                    border-radius:10px;padding:18px 24px;margin-bottom:16px;
+                    display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <button onclick="bpdResetToInput()" style="background:rgba(255,255,255,0.15);border:none;color:#fff;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600">&#8592; New</button>
+          <div style="flex:1">
+            <div id="bpd-result-title" style="font-size:16px;font-weight:700;color:#fff"></div>
+            <div id="bpd-result-sub" style="font-size:11px;color:#E0C8FF"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="background:rgba(255,255,255,0.15);color:#7dffb3;border-radius:12px;padding:3px 12px;font-size:11px;font-weight:600">&#10003; Generated</span>
+            <button onclick="bpdExportPDF()" style="padding:7px 14px;border-radius:8px;background:rgba(255,255,255,0.9);color:#460073;border:none;font-weight:700;font-size:12px;cursor:pointer">&#128196; PDF</button>
+            <button onclick="bpdDownloadWord()" style="padding:7px 14px;border-radius:8px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);font-weight:600;font-size:12px;cursor:pointer">&#128196; Word</button>
+            <button onclick="bpdExportPPTX()" style="padding:7px 14px;border-radius:8px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);font-weight:600;font-size:12px;cursor:pointer">&#128202; PPTX</button>
+          </div>
+        </div>
+        <!-- Tab bar — inside a card -->
+        <div class="card" style="padding:0;overflow:hidden">
+          <div style="overflow-x:auto;border-bottom:1px solid var(--border)">
+            <div style="display:flex;min-width:640px">
+              ${[["full","&#128209; L2&#8211;L5 Full"],["overview","&#9962; L2 Overview"],["l3","&#9783; L3 Areas"],["l4","&#128221; L4 Activities"],["l5","&#9881; L5 Config"],["e2e","&#9654; E2E Swimlane"],["compare","&#9889; As-Is vs To-Be"],["fts","&#10003; Fit-to-Standard"],["next","&#8594; Next Steps"]].map(([id,lbl])=>`
+                <button class="bpd-tab-btn${id==="full"?" active":""}" data-tab="${id}" onclick="bpdSwitchTab('${id}')">${lbl}</button>`).join("")}
+            </div>
+          </div>
+          <div id="bpd-tab-content" style="padding:24px;min-height:400px"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+window.bpdResumeLast = function() {
+  try {
+    const savedData = localStorage.getItem("bpd_last_data");
+    const savedForm = localStorage.getItem("bpd_last_form");
+    if (!savedData || !savedForm) { bpdClearCache(); return; }
+    const restoredData = JSON.parse(savedData);
+    const restoredForm = JSON.parse(savedForm);
+    window._bpd.data = restoredData;
+    window._bpd.form = restoredForm;
+    document.getElementById("bpd-input-view").style.display = "none";
+    document.getElementById("bpd-loading-view").style.display = "none";
+    document.getElementById("bpd-result-view").style.display = "";
+    const titleEl = document.getElementById("bpd-result-title");
+    const subEl   = document.getElementById("bpd-result-sub");
+    if (titleEl) titleEl.textContent = restoredData.l2?.name || "Process Documentation";
+    if (subEl)   subEl.textContent   = `${restoredForm.projectName||""} · ${restoredForm.client||""} · ${restoredForm.module}`;
+    window._bpd.activeTab = "full";
+    document.querySelectorAll(".bpd-tab-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.tab === "full");
+    });
+    const tc = document.getElementById("bpd-tab-content");
+    if (tc) tc.innerHTML = _bpdRenderTab("full");
+  } catch(_) {
+    // Corrupted storage — wipe it and dismiss the banner cleanly
+    bpdClearCache();
+  }
+};
+
+window.bpdClearCache = function() {
+  try { localStorage.removeItem("bpd_last_data"); localStorage.removeItem("bpd_last_form"); } catch(_) {}
+  const banner = document.getElementById("bpd-resume-banner");
+  if (banner) banner.remove();
+};
+
+function bindBPD() {
+  // Show a non-intrusive resume banner if a previous session exists — never auto-restore
+  try {
+    const savedData = localStorage.getItem("bpd_last_data");
+    const savedForm = localStorage.getItem("bpd_last_form");
+    if (savedData && savedForm) {
+      const sf = JSON.parse(savedForm);
+      const label = [sf.projectName, sf.client, sf.module].filter(Boolean).join(" · ");
+      // Inject banner above the input form
+      setTimeout(() => {
+        const inputView = document.getElementById("bpd-input-view");
+        if (!inputView || document.getElementById("bpd-resume-banner")) return;
+        const banner = document.createElement("div");
+        banner.id = "bpd-resume-banner";
+        banner.style.cssText = "background:linear-gradient(90deg,#460073,#7B00CC);color:#fff;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px";
+        banner.innerHTML = `<span style="display:flex;align-items:center;gap:8px"><span style="font-size:15px">&#128221;</span><strong>Previous session:</strong> ${_bpdEsc(label)}</span><span style="display:flex;gap:8px"><button onclick="bpdResumeLast()" style="background:rgba(255,255,255,0.95);color:#460073;border:none;border-radius:6px;padding:5px 14px;font-weight:700;font-size:12px;cursor:pointer">Resume</button><button onclick="bpdClearCache()" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer">&#10005; Clear</button></span>`;
+        inputView.insertBefore(banner, inputView.firstChild);
+      }, 50);
+    }
+  } catch(_) {}
+
+  const f = window._bpd.form;
+  const setVal = (id, v) => { const el=document.getElementById(id); if(el&&v) el.value=v; };
+  setVal("bpd-desc", f.description);
+  setVal("bpd-projectName", f.projectName);
+  setVal("bpd-client", f.client);
+  setVal("bpd-inScope", f.inScope);
+  setVal("bpd-stakeholders", f.stakeholders);
+  setVal("bpd-integrations", f.integrations);
+  const modEl = document.getElementById("bpd-module");
+  if (modEl && f.module) modEl.value = f.module;
+  if (f.description) bpdOnDescInput(f.description);
+}
+
+window.bpdResetToInput = function() {
+  if (window._bpd.abortCtrl) { window._bpd.abortCtrl.abort(); window._bpd.abortCtrl = null; }
+  window._bpd.data        = null;
+  window._bpd.progress    = 0;
+  window._bpd.autoFilled  = new Set();
+  window._bpd.selectedIds = [];
+  window._bpd.catalogData = null;
+  try { localStorage.removeItem("bpd_last_data"); localStorage.removeItem("bpd_last_form"); } catch(_) {}
+  const banner = document.getElementById("bpd-resume-banner"); if (banner) banner.remove();
+  // Reset scope picker
+  const sl = document.getElementById("bpd-scope-list");
+  if (sl) sl.innerHTML = `<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:16px 0">Type a process description above &#8212; scope items will auto-match from the SAP catalog</div>`;
+  const sc = document.getElementById("bpd-selected-count");
+  if (sc) { sc.textContent = ""; }
+  const ss = document.getElementById("bpd-scope-search");
+  if (ss) ss.value = "";
+  const gl = document.getElementById("bpd-gen-label");
+  if (gl) gl.textContent = "Generate L2–L5 Documentation";
+  document.getElementById("bpd-input-view").style.display = "";
+  document.getElementById("bpd-loading-view").style.display = "none";
+  document.getElementById("bpd-result-view").style.display = "none";
+};
+
+function _bpdRefreshBtn() {
+  const desc = window._bpd.form.description || "";
+  const hasScope = window._bpd.selectedIds.length > 0;
+  const ok = desc.length > 20 || hasScope;
+  const btn  = document.getElementById("bpd-gen-btn");
+  const hint = document.getElementById("bpd-desc-hint");
+  if (btn)  { btn.disabled = !ok; btn.style.opacity = ok ? "1" : "0.5"; btn.style.cursor = ok ? "pointer" : "not-allowed"; }
+  if (hint) {
+    if (hasScope && desc.length <= 20) {
+      hint.textContent = `${window._bpd.selectedIds.length} scope item${window._bpd.selectedIds.length>1?"s":""} selected — ready to generate`;
+      hint.style.color = "var(--accent)";
+    } else {
+      hint.textContent = desc.length > 20 ? `${desc.length} characters` : `${desc.length} / 20 minimum`;
+      hint.style.color = desc.length > 20 ? "var(--accent)" : "var(--text-muted)";
+    }
+  }
+}
+
+window.bpdOnDescInput = function(val) {
+  const desc = (val || document.getElementById("bpd-desc")?.value || "").trim();
+  window._bpd.form.description = desc;
+  _bpdRefreshBtn();
+  clearTimeout(window._bpd.autoFillTimer);
+  clearTimeout(window._bpd.matchTimer);
+  if (desc.length > 80) {
+    window._bpd.autoFillTimer = setTimeout(_bpdAutoFill, 1200);
+    // matchTimer fires after auto-fill has a chance to set the module (auto-fill starts at 1200ms + ~1s Claude round-trip)
+    window._bpd.matchTimer    = setTimeout(_bpdAutoMatch, 2800);
+  }
+};
+
+window.bpdHandleFile = async function(file) {
+  if (!file) return;
+  const name = file.name.toLowerCase();
+  const ta = document.getElementById("bpd-desc");
+  if (!ta) return;
+  ta.value = "Reading " + file.name + "...";
+  try {
+    let text = "";
+    if (name.endsWith(".txt") || name.endsWith(".md")) {
+      text = await file.text();
+    } else if (name.endsWith(".docx")) {
+      if (typeof mammoth === "undefined") { ta.value = "mammoth.js not loaded — use .txt or .md instead."; return; }
+      const buf = await file.arrayBuffer();
+      const res = await mammoth.extractRawText({ arrayBuffer: buf });
+      text = (res.value || "").trim() || "No text found in DOCX.";
+    } else if (name.endsWith(".doc")) {
+      ta.value = "Old .doc not supported. Save as .docx or .txt and re-upload.";
+      return;
+    } else {
+      ta.value = "Unsupported format. Use .txt .md .docx";
+      return;
+    }
+    ta.value = text.slice(0, 6000);
+    bpdOnDescInput(ta.value);
+  } catch(e) {
+    ta.value = "Error reading file: " + e.message;
+  }
+};
+
+async function _bpdAutoFill() {
+  const desc = window._bpd.form.description;
+  if (desc.length < 80) return;
+  const badge = document.getElementById("bpd-autofill-badge");
+  if (badge) { badge.style.display="inline-flex"; badge.innerHTML=`<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(161,0,255,0.1);color:var(--accent);border-radius:12px;padding:2px 10px;font-size:11px;font-weight:600"><span style="width:8px;height:8px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;display:inline-block"></span>Auto-filling...</span>`; }
+  try {
+    const shortDesc = desc.length > 800 ? desc.slice(0,800)+"..." : desc;
+    const prompt = `Extract metadata from this SAP project description. Return ONLY a JSON object — no markdown, no backticks.
+Description: "${shortDesc.replace(/"/g,'\\"').replace(/\n/g,' ')}"
+Return exactly: {"projectName":"short 2-5 word project name","client":"company name","module":"pick exactly one of: Sales & Distribution, Finance & Controlling, Sourcing & Procurement, Manufacturing, Asset Management, Supply Chain, Human Resources, Professional Services, Customer Service, R&D & Engineering, Cross-Functional","inScope":"comma-separated key processes (max 8)","stakeholders":"comma-separated roles (max 6)","integrations":"comma-separated external systems or empty"}
+Start with { end with }.`;
+    const resp = await fetch("/api/bpd/autofill", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({prompt,max_tokens:400}) });
+    const d = await resp.json();
+    const raw = (d.content||[]).map(c=>c.text||"").join("").trim().replace(/^```[a-z]*\n?/,"").replace(/\n?```$/,"").trim();
+    const meta = _bpdSafeJSON(raw);
+    if (!meta) return;
+    let filled = 0;
+    const fill = (id, k) => {
+      const el=document.getElementById("bpd-"+id), f=window._bpd.form, v=(meta[k]||"").trim();
+      if (el && v && (!f[k]||f[k]===""||f[k]===_BPD_MODULES[0])) {
+        if (id==="module") {
+          const m = _BPD_MODULES.find(m=>m===v) || _BPD_MODULES.find(m=>m.split(" - ")[0]===v.split(" - ")[0]) || _BPD_MODULES.find(m=>m.toLowerCase().includes(v.toLowerCase().split(" ")[0]));
+          if (m) { el.value = m; f.module = m; filled++; }
+        } else { el.value=v; f[k]=v; filled++; }
+      }
+    };
+    const prevModule = window._bpd.form.module;
+    fill("projectName","projectName"); fill("client","client"); fill("module","module");
+    fill("inScope","inScope"); fill("stakeholders","stakeholders"); fill("integrations","integrations");
+    const step2badge = document.getElementById("bpd-step2-badge");
+    if (step2badge && filled>0) { step2badge.style.display="inline"; step2badge.textContent=`✓ ${filled} fields filled`; }
+    if (badge && filled>0) badge.innerHTML=`<span style="background:#d4f6e8;color:#0FA968;border-radius:12px;padding:2px 10px;font-size:11px;font-weight:600">&#10003; ${filled} fields auto-filled</span>`;
+    else if (badge && filled===0) badge.style.display="none";
+    // If auto-fill changed the module, clear any pre-selected scope items and re-run match with the correct module
+    if (window._bpd.form.module !== prevModule) {
+      window._bpd.selectedIds = [];
+      _bpdUpdateScopeCheckboxes();
+      _bpdUpdateCount();
+      clearTimeout(window._bpd.matchTimer);
+      _bpdAutoMatch();
+    }
+  } catch(_) { if(badge) badge.style.display="none"; }
+}
+
+// ── Scope catalog matching ─────────────────────────────────────────────────────
+
+async function _bpdAutoMatch() {
+  const desc   = window._bpd.form.description;
+  const module = document.getElementById("bpd-module")?.value || window._bpd.form.module || _BPD_MODULES[0];
+  if (desc.length < 40) return;
+  const list = document.getElementById("bpd-scope-list");
+  if (!list) return;
+  list.innerHTML = `<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:16px 0;display:flex;align-items:center;justify-content:center;gap:8px"><span style="width:12px;height:12px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;display:inline-block"></span>Matching against SAP catalog&#8230;</div>`;
+  try {
+    const resp = await fetch("/api/bpd/match", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({module, description: desc.slice(0, 600)})
+    });
+    const d = await resp.json();
+    _bpdRenderScopeList(d.matches || [], d.total || 0);
+    // Auto-select top 4 if nothing selected yet
+    if (window._bpd.selectedIds.length === 0) {
+      (d.matches || []).slice(0, 4).forEach(m => {
+        if (!window._bpd.selectedIds.includes(m.id)) window._bpd.selectedIds.push(m.id);
+      });
+      _bpdUpdateScopeCheckboxes();
+      _bpdUpdateCount();
+    }
+  } catch(e) {
+    if (list) list.innerHTML = `<div style="color:#DC2626;font-size:12px;padding:10px">Match failed: ${_bpdEsc(e.message)}</div>`;
+  }
+}
+
+window.bpdSearchScope = async function(val) {
+  const module = document.getElementById("bpd-module")?.value || window._bpd.form.module || _BPD_MODULES[0];
+  const desc   = window._bpd.form.description;
+  const list   = document.getElementById("bpd-scope-list");
+  if (!list) return;
+  if (!val || val.trim().length < 2) {
+    // Revert to auto-match results
+    if (desc.length > 40) _bpdAutoMatch();
+    return;
+  }
+  list.innerHTML = `<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:12px 0">Searching&#8230;</div>`;
+  try {
+    const resp = await fetch("/api/bpd/match", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({module, description: desc.slice(0,300), keywords: val.trim().split(/\s+/)})
+    });
+    const d = await resp.json();
+    _bpdRenderScopeList(d.matches || [], d.total || 0, true);
+  } catch(e) {
+    list.innerHTML = `<div style="color:#DC2626;font-size:12px;padding:10px">Search failed: ${_bpdEsc(e.message)}</div>`;
+  }
+};
+
+function _bpdRenderScopeList(matches, total, isSearch) {
+  const list = document.getElementById("bpd-scope-list");
+  if (!list) return;
+  if (!matches.length) {
+    list.innerHTML = `<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:16px 0">No matching scope items found. Try a different search term.</div>`;
+    return;
+  }
+  const colors = ["#3B82F6","#8B5CF6","#059669","#EA580C","#DC2626","#0891B2","#7C3AED","#0D9488","#D97706","#6366F1"];
+  list.innerHTML = matches.map((m, i) => {
+    const isSelected = window._bpd.selectedIds.includes(m.id);
+    const c = colors[i % colors.length];
+    return `<div id="bpd-scope-item-${m.id}" onclick="bpdToggleScope('${m.id}')" style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:7px;cursor:pointer;background:${isSelected?"rgba(161,0,255,0.07)":"transparent"};border:1.5px solid ${isSelected?"var(--accent)":"var(--border)"};margin-bottom:5px;transition:all .15s">
+      <div style="margin-top:2px">
+        <div id="bpd-scope-chk-${m.id}" style="width:16px;height:16px;border-radius:4px;border:2px solid ${isSelected?"var(--accent)":"#CBD5E1"};background:${isSelected?"var(--accent)":"white"};display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s">
+          ${isSelected?'<span style="color:white;font-size:10px;font-weight:700">&#10003;</span>':""}
+        </div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+          <span style="background:${c}18;color:${c};border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700;flex-shrink:0">${_bpdEsc(m.id)}</span>
+          <span style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_bpdEsc(m.name)}</span>
+        </div>
+        <div style="font-size:10.5px;color:var(--text-muted)">${_bpdEsc(m.l2)} &#183; ${_bpdEsc(m.l1)}</div>
+        ${m.hint?`<div style="font-size:10.5px;color:var(--text-muted);margin-top:2px;line-height:1.4">${_bpdEsc(m.hint.slice(0,120))}&#8230;</div>`:""}
+      </div>
+    </div>`;
+  }).join("") + (total > matches.length ? `<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:4px 0">+ ${total - matches.length} more — refine search to narrow down</div>` : "");
+  _bpdUpdateCount();
+}
+
+window.bpdToggleScope = function(id) {
+  const ids = window._bpd.selectedIds;
+  const idx = ids.indexOf(id);
+  if (idx >= 0) {
+    ids.splice(idx, 1);
+  } else {
+    ids.push(id);
+  }
+  // Update just this item's visual state
+  const item = document.getElementById(`bpd-scope-item-${id}`);
+  const chk  = document.getElementById(`bpd-scope-chk-${id}`);
+  const selected = ids.includes(id);
+  if (item) {
+    item.style.background = selected ? "rgba(161,0,255,0.07)" : "transparent";
+    item.style.border = `1.5px solid ${selected?"var(--accent)":"var(--border)"}`;
+  }
+  if (chk) {
+    chk.style.background = selected ? "var(--accent)" : "white";
+    chk.style.borderColor = selected ? "var(--accent)" : "#CBD5E1";
+    chk.innerHTML = selected ? '<span style="color:white;font-size:10px;font-weight:700">&#10003;</span>' : "";
+  }
+  _bpdUpdateCount();
+};
+
+function _bpdUpdateScopeCheckboxes() {
+  const ids = window._bpd.selectedIds;
+  ids.forEach(id => {
+    const item = document.getElementById(`bpd-scope-item-${id}`);
+    const chk  = document.getElementById(`bpd-scope-chk-${id}`);
+    if (item) { item.style.background="rgba(161,0,255,0.07)"; item.style.border="1.5px solid var(--accent)"; }
+    if (chk)  { chk.style.background="var(--accent)"; chk.style.borderColor="var(--accent)"; chk.innerHTML='<span style="color:white;font-size:10px;font-weight:700">&#10003;</span>'; }
+  });
+}
+
+function _bpdUpdateCount() {
+  const n    = window._bpd.selectedIds.length;
+  const el   = document.getElementById("bpd-selected-count");
+  const genLabel = document.getElementById("bpd-gen-label");
+  if (el) {
+    el.innerHTML = n > 0
+      ? `${n} scope item${n>1?"s":""} selected &#8212; generation will be grounded in real SAP catalog data`
+      : "Select scope items for catalog-grounded generation, or just describe your process";
+    el.style.color = n > 0 ? "var(--accent)" : "var(--text-muted)";
+  }
+  if (genLabel) genLabel.textContent = n > 0 ? `Generate — Grounded (${n} items)` : "Generate L2–L5 Documentation";
+  _bpdRefreshBtn();
+}
+
+function _bpdSafeJSON(raw) {
+  raw = (raw||"").trim().replace(/^```[a-z]*\n?/,"").replace(/\n?```$/,"").trim();
+  try { return JSON.parse(raw); } catch(_) {}
+  let attempt = raw.replace(/,\s*$/,"").replace(/,\s*"[^"]*"?\s*$/,"");
+  const stack=[];let inStr=false,esc=false;
+  for(const ch of attempt){if(esc){esc=false;continue;}if(ch==="\\"){esc=true;continue;}if(ch==='"'){inStr=!inStr;continue;}if(inStr)continue;if(ch==="{"||ch==="[")stack.push(ch==="{"?"}":"]");else if(ch==="}"||ch==="]")stack.pop();}
+  if(inStr)attempt+='"';while(stack.length)attempt+=stack.pop();
+  try { return JSON.parse(attempt); } catch(_) { return null; }
+}
+
+function _bpdWrap(t, m) {
+  if (!t||t.length<=m) return [t||""];
+  const words=t.split(" "),lines=[];let cur="";
+  for(const w of words){if((cur+" "+w).trim().length>m){if(cur)lines.push(cur.trim());if(lines.length>=3){lines[2]=lines[2].slice(0,m-1)+"...";return lines.slice(0,3);}cur=w;}else cur=cur?cur+" "+w:w;}
+  if(cur)lines.push(cur.trim());
+  if(lines.length>3){lines[2]=lines[2].slice(0,m-1)+"...";return lines.slice(0,3);}
+  return lines.length?lines:[t.slice(0,m)];
+}
+
+function _bpdLaneColor(r){
+  r=(r||"").toLowerCase();
+  if(r.includes("s/4hana")||r.includes("system"))return{bg:"#F9F5FF",bd:"#7E57C2",tx:"#4A148C"};
+  if(r.includes("approv")||r.includes("manager")||r.includes("director"))return{bg:"#FFF8E1",bd:"#FFB300",tx:"#E65100"};
+  if(r.includes("financ")||r.includes("account")||r.includes("billing")||r.includes("treasury"))return{bg:"#F1F8E9",bd:"#7CB342",tx:"#33691E"};
+  if(r.includes("warehouse")||r.includes("shipping")||r.includes("picking")||r.includes("receiving"))return{bg:"#E3F2FD",bd:"#42A5F5",tx:"#0D47A1"};
+  return{bg:"#F5F5F5",bd:"#90A4AE",tx:"#37474F"};
+}
+
+function _bpdSvg(swimlane) {
+  if (!swimlane?.lanes?.length) return "<div style='color:#9E96B8;font-size:12px;padding:12px'>No swimlane data</div>";
+  const LW=52,CW=185,SG=22,LH=130,TH=52,BW=162,BH=84;
+  const lanes = swimlane.lanes;
+  // Cross-lane interleaving: step i from each lane in round-robin
+  const seq=[];
+  const maxLen=Math.max(...lanes.map(l=>(l.steps||[]).length),0);
+  for(let si=0;si<maxLen;si++){for(let li=0;li<lanes.length;li++){const steps=(lanes[li].steps||[]).filter(s=>s&&s.text);if(si<steps.length)seq.push({...steps[si],laneIdx:li});}}
+  const W=Math.max(900,LW+seq.length*(CW+SG)+100);
+  const H=TH+lanes.length*LH+6;
+  const positions=seq.map((step,si)=>({cx:LW+50+si*(CW+SG)+CW/2,cy:TH+step.laneIdx*LH+LH/2,step}));
+  const es=s=>(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const uid="bpd"+Math.random().toString(36).slice(2,7);
+
+  function rs(step,cx,cy){
+    const lines=_bpdWrap(step.text||"",16),lh=14,hx=cx-BW/2,hy=cy-BH/2;
+    if(step.type==="D"){const sz=28;return`<g><polygon points="${cx},${cy-sz} ${cx+sz},${cy} ${cx},${cy+sz} ${cx-sz},${cy}" fill="white" stroke="#455A64" stroke-width="2"/><text x="${cx}" y="${cy+2}" text-anchor="middle" font-size="16" font-weight="800" fill="#455A64">x</text>${lines.slice(0,2).map((l,i)=>`<text x="${cx}" y="${cy+sz+14+(i*12)}" text-anchor="middle" font-size="10" fill="#37474F" font-style="italic">${es(l)}</text>`).join("")}</g>`;}
+    if(step.type==="Y")return`<g><rect x="${hx}" y="${hy}" width="${BW}" height="${BH}" rx="8" fill="#F1F8E9" stroke="#558B2F" stroke-width="1.2"/><rect x="${cx-16}" y="${hy-9}" width="32" height="16" rx="3" fill="#558B2F"/><text x="${cx}" y="${hy+2}" text-anchor="middle" font-size="9" font-weight="800" fill="white">YES</text>${lines.map((l,i)=>`<text x="${cx}" y="${cy-(lines.length-1)*lh/2+4+(i*lh)}" text-anchor="middle" font-size="11" fill="#33691E" font-weight="600">${es(l.replace(/^YES\s*[-→>]\s*/i,""))}</text>`).join("")}</g>`;
+    if(step.type==="N")return`<g><rect x="${hx}" y="${hy}" width="${BW}" height="${BH}" rx="8" fill="#FBE9E7" stroke="#C62828" stroke-width="1.2"/><rect x="${cx-12}" y="${hy-9}" width="24" height="16" rx="3" fill="#C62828"/><text x="${cx}" y="${hy+2}" text-anchor="middle" font-size="9" font-weight="800" fill="white">NO</text>${lines.map((l,i)=>`<text x="${cx}" y="${cy-(lines.length-1)*lh/2+4+(i*lh)}" text-anchor="middle" font-size="11" fill="#B71C1C" font-weight="600">${es(l.replace(/^NO\s*[-→>]\s*/i,""))}</text>`).join("")}</g>`;
+    if(step.type==="A")return`<g><rect x="${hx}" y="${hy}" width="${BW}" height="${BH}" rx="8" fill="#EDE7F6" stroke="#5E35B1" stroke-width="1" stroke-dasharray="6,3"/>${lines.map((l,i)=>`<text x="${cx+2}" y="${cy-(lines.length-1)*lh/2+4+(i*lh)}" text-anchor="middle" font-size="11" fill="#311B92">${es(l)}</text>`).join("")}<circle cx="${hx+13}" cy="${hy+13}" r="6" fill="none" stroke="#5E35B1" stroke-width="1"/></g>`;
+    return`<g><rect x="${hx}" y="${hy}" width="${BW}" height="${BH}" rx="8" fill="white" stroke="#78909C" stroke-width="1.2"/><rect x="${hx}" y="${hy+4}" width="4" height="${BH-8}" rx="2" fill="#1E88E5"/>${lines.map((l,i)=>`<text x="${cx+2}" y="${cy-(lines.length-1)*lh/2+4+(i*lh)}" text-anchor="middle" font-size="11" fill="#263238" font-weight="600">${es(l)}</text>`).join("")}</g>`;
+  }
+
+  let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;min-width:700px">`;
+  svg+=`<defs><marker id="${uid}-arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0.5,8 3,0 5.5" fill="#455A64"/></marker></defs>`;
+  svg+=`<rect x="0" y="0" width="${W}" height="${TH}" fill="#263238"/>`;
+  svg+=`<text x="14" y="${TH/2+5}" font-size="16" font-weight="700" fill="white" font-family="Georgia,serif">${es((swimlane.title||"Process Flow").slice(0,90))}</text>`;
+  lanes.forEach((lane,li)=>{
+    const lc=_bpdLaneColor(lane.role||lane.name||""),ly=TH+li*LH;
+    svg+=`<rect x="${LW}" y="${ly}" width="${W-LW}" height="${LH}" fill="${li%2===0?"#FAFAFA":"#FFFFFF"}"/>`;
+    svg+=`<line x1="0" y1="${ly}" x2="${W}" y2="${ly}" stroke="#CFD8DC" stroke-width="0.8"/>`;
+    svg+=`<line x1="0" y1="${ly+LH}" x2="${W}" y2="${ly+LH}" stroke="#CFD8DC" stroke-width="0.8"/>`;
+    svg+=`<rect x="0" y="${ly}" width="${LW}" height="${LH}" fill="${lc.bg}"/>`;
+    svg+=`<rect x="${LW-3}" y="${ly}" width="3" height="${LH}" fill="${lc.bd}"/>`;
+    svg+=`<text x="${LW/2-2}" y="${ly+LH/2}" text-anchor="middle" dominant-baseline="middle" font-size="11" font-weight="700" fill="${lc.tx}" transform="rotate(-90,${LW/2-2},${ly+LH/2})">${es((lane.role||lane.name||"Role").slice(0,22))}</text>`;
+  });
+  svg+=`<line x1="${LW}" y1="${TH}" x2="${LW}" y2="${H}" stroke="#B0BEC5" stroke-width="1"/>`;
+  if(positions.length>0){svg+=`<circle cx="${LW+22}" cy="${positions[0].cy}" r="10" fill="white" stroke="#455A64" stroke-width="2.5"/>`;svg+=`<line x1="${LW+34}" y1="${positions[0].cy}" x2="${positions[0].cx-BW/2-4}" y2="${positions[0].cy}" stroke="#455A64" stroke-width="1.5" marker-end="url(#${uid}-arr)"/>`;}
+  positions.forEach(({cx,cy,step},si)=>{
+    svg+=rs(step,cx,cy);
+    if(si<positions.length-1){const next=positions[si+1];const fromX=cx+(step.type==="D"?30:BW/2)+3;const toX=next.cx-BW/2-4;if(Math.abs(cy-next.cy)<2){svg+=`<line x1="${fromX}" y1="${cy}" x2="${toX}" y2="${next.cy}" stroke="#455A64" stroke-width="1.3" marker-end="url(#${uid}-arr)"/>`;}else{const midX=(fromX+toX)/2;svg+=`<path d="M${fromX},${cy} L${midX},${cy} L${midX},${next.cy} L${toX},${next.cy}" fill="none" stroke="#455A64" stroke-width="1.3" marker-end="url(#${uid}-arr)"/>`;}}
+  });
+  if(positions.length>0){const last=positions[positions.length-1],ex=last.cx+BW/2+28;svg+=`<line x1="${last.cx+BW/2+3}" y1="${last.cy}" x2="${ex-12}" y2="${last.cy}" stroke="#455A64" stroke-width="1.3" marker-end="url(#${uid}-arr)"/>`;svg+=`<circle cx="${ex}" cy="${last.cy}" r="10" fill="white" stroke="#455A64" stroke-width="3.5"/>`;}
+  svg+=`<rect x="0" y="${H-4}" width="${W}" height="4" fill="#263238"/>`;
+  svg+=`</svg>`;
+  return`<div style="overflow-x:auto;border-radius:8px;border:1.5px solid #90A4AE;background:white;box-shadow:0 2px 12px rgba(0,0,0,0.06);margin:12px 0"><div style="padding:4px 10px;background:#263238;border-radius:8px 8px 0 0;font-size:10px;color:#80CBC4;font-weight:600">BPMN 2.0 — scroll to view full diagram</div>${svg}</div>`;
+}
+
+window.bpdSwitchTab = function(tab) {
+  window._bpd.activeTab = tab;
+  document.querySelectorAll(".bpd-tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tab === tab);
+  });
+  const tc = document.getElementById("bpd-tab-content");
+  if (tc) tc.innerHTML = _bpdRenderTab(tab);
+};
+
+function _bpdEsc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function _bpdL2Html(d) {
+  if (!d.l2) return "";
+  let html = `<div style="background:linear-gradient(135deg,#5B2FD4,#3E1FA3);border-radius:14px;padding:24px 28px;color:white;margin-bottom:18px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,0.06)"></div>
+    <div style="position:relative">
+      <div style="font-size:9px;font-weight:700;letter-spacing:3px;opacity:0.6;margin-bottom:5px">L2 &#8212; END-TO-END PROCESS</div>
+      <h2 style="font-size:22px;font-weight:700;margin:0 0 8px;font-family:Georgia,serif">${_bpdEsc(d.l2.name)}</h2>
+      <p style="font-size:13px;opacity:0.85;line-height:1.7;margin:0 0 12px;max-width:580px">${_bpdEsc(d.l2.description)}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${(d.l2.scopeItems||[]).map(s=>`<span style="background:rgba(255,255,255,0.15);border-radius:6px;padding:3px 10px;font-size:11px">&#128204; ${_bpdEsc(s)}</span>`).join("")}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${(d.l2.kpis||[]).map(k=>`<span style="background:rgba(255,255,255,0.1);border-radius:6px;padding:3px 10px;font-size:11px">&#128202; ${_bpdEsc(k)}</span>`).join("")}</div>
+    </div>
+  </div>`;
+  if (d.endToEndSwimlane) html += _bpdSvg(d.endToEndSwimlane);
+  return html;
+}
+
+function _bpdL3Html(d) {
+  const colors = ["#3B82F6","#8B5CF6","#059669","#EA580C","#DC2626","#0891B2"];
+  let html = "";
+  (d.l3Areas||[]).forEach((area,i) => {
+    const c=colors[i%colors.length];
+    html += `<div style="background:white;border:1px solid #E6E1F0;border-radius:14px;overflow:hidden;margin-bottom:12px">
+      <div style="background:${c};padding:12px 16px;display:flex;align-items:center;gap:10px">
+        <div style="width:30px;height:30px;border-radius:7px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:white">${i+1}</div>
+        <div><div style="color:white;font-size:13px;font-weight:700">${_bpdEsc(area.name)}</div><div style="color:rgba(255,255,255,0.8);font-size:10.5px">${_bpdEsc(area.id)} &#183; ${_bpdEsc(area.scopeItem)} &#183; ${_bpdEsc(area.primaryRole)}</div></div>
+      </div>
+      <div style="padding:14px 16px">
+        <p style="font-size:12.5px;color:#6E6494;line-height:1.6;margin-bottom:10px">${_bpdEsc(area.description)}</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${(area.fioriApps||[]).map(app=>`<span style="background:${c}18;color:${c};border-radius:5px;padding:3px 8px;font-size:10.5px;font-weight:600">&#128421; ${_bpdEsc(app)}</span>`).join("")}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div style="background:#F0FDF4;border-radius:7px;padding:8px 10px"><div style="font-size:9px;font-weight:600;color:#166534;text-transform:uppercase;margin-bottom:3px">Inputs</div>${(area.inputs||[]).map(inp=>`<div style="font-size:11px;color:#166534">&#8594; ${_bpdEsc(inp)}</div>`).join("")}</div>
+          <div style="background:#EFF6FF;border-radius:7px;padding:8px 10px"><div style="font-size:9px;font-weight:600;color:#1E40AF;text-transform:uppercase;margin-bottom:3px">Outputs</div>${(area.outputs||[]).map(out=>`<div style="font-size:11px;color:#1E40AF">&#8592; ${_bpdEsc(out)}</div>`).join("")}</div>
+        </div>
+        ${area.swimlane ? _bpdSvg(area.swimlane) : ""}
+      </div>
+    </div>`;
+  });
+  return html;
+}
+
+function _bpdL4Html(d) {
+  const colors = ["#3B82F6","#8B5CF6","#059669","#EA580C","#DC2626","#0891B2"];
+  let html = "";
+  (d.l4Activities||[]).forEach((act,i) => {
+    const c=colors[i%colors.length];
+    html += `<div style="background:white;border:1px solid #E6E1F0;border-radius:14px;overflow:hidden;margin-bottom:12px">
+      <div style="background:linear-gradient(135deg,${c},${c}cc);padding:13px 18px;display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:white">${i+1}</div>
+        <div style="flex:1"><div style="color:white;font-size:14px;font-weight:700">${_bpdEsc(act.name)}</div><div style="color:rgba(255,255,255,0.8);font-size:10.5px">${_bpdEsc(act.id)} &#183; ${_bpdEsc(act.scopeItem||act.parentL3)} &#183; ${_bpdEsc(act.role)}</div></div>
+        <div style="background:rgba(255,255,255,0.2);border-radius:7px;padding:3px 10px;color:white;font-size:10.5px;font-weight:600">${_bpdEsc(act.fioriApp)}</div>
+      </div>
+      <div style="padding:15px 18px">
+        ${act.preconditions?.length ? `<div style="background:#FFFBEB;border:1px solid #D97706;border-radius:8px;padding:10px 13px;margin-bottom:12px"><div style="font-size:9px;font-weight:600;color:#D97706;text-transform:uppercase;margin-bottom:3px">Preconditions</div>${(act.preconditions||[]).map(pc=>`<div style="font-size:12px;color:#92400E">&#8226; ${_bpdEsc(pc)}</div>`).join("")}</div>` : ""}
+        <div style="font-size:9px;font-weight:600;color:#9E96B8;text-transform:uppercase;margin-bottom:8px">Step-by-Step</div>
+        <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:14px">
+          ${(act.steps||[]).map((step,j)=>{const isSys=/s\/4hana|auto|system/i.test(step);return`<div style="display:flex;gap:0;align-items:stretch"><div style="width:28px;display:flex;flex-direction:column;align-items:center"><div style="width:22px;height:22px;border-radius:5px;background:${isSys?"#F3E5F5":c+"20"};color:${isSys?"#7B1FA2":c};font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${j+1}</div></div><div style="flex:1;background:${isSys?"#F3E5F5":"white"};border:1px solid ${isSys?"#9C27B044":"#E6E1F0"};border-radius:7px;padding:6px 11px;margin-left:5px;margin-bottom:2px"><div style="font-size:12px;color:#1B1340;line-height:1.5">${_bpdEsc(step)}</div></div></div>`;}).join("")}
+        </div>
+        ${act.keyFields?.length ? `<div style="font-size:9px;font-weight:600;color:#9E96B8;text-transform:uppercase;margin-bottom:6px">Key Fields</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">${(act.keyFields||[]).map(f=>`<div style="background:#F7F5FB;border:1px solid #E6E1F0;border-radius:7px;padding:8px 10px"><div style="font-size:11px;font-weight:600;color:#1B1340">${_bpdEsc(f.label)}</div><div style="font-size:10px;color:#5B2FD4;font-family:monospace">${_bpdEsc(f.odata)}</div><div style="display:flex;justify-content:space-between;margin-top:3px"><span style="font-size:9px;color:#9E96B8">${_bpdEsc(f.entity)}</span><span style="background:${f.mandatory?"#FEF2F2":"#ECFDF3"};color:${f.mandatory?"#DC2626":"#0FA968"};border-radius:3px;padding:0 5px;font-size:9px;font-weight:600">${f.mandatory?"Required":"Optional"}</span></div></div>`).join("")}</div>` : ""}
+        ${act.swimlane ? _bpdSvg(act.swimlane) : ""}
+      </div>
+    </div>`;
+  });
+  return html;
+}
+
+function _bpdL5Html(d) {
+  let html = "";
+  (d.l5Config||[]).forEach((cfg,i) => {
+    html += `<div style="background:white;border:1px solid #E6E1F0;border-radius:12px;overflow:hidden;margin-bottom:10px">
+      <div style="background:#EDE7FF;padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #E6E1F0">
+        <span style="background:#5B2FD4;color:white;border-radius:5px;padding:3px 8px;font-size:10px;font-weight:700">${_bpdEsc(cfg.id)}</span>
+        ${cfg.scopeItem?`<span style="background:#EBF5FF;color:#1565C0;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:600">&#128204; ${_bpdEsc(cfg.scopeItem)}</span>`:""}
+        <span style="font-size:13px;font-weight:600;color:#1B1340">${_bpdEsc(cfg.name)}</span>
+      </div>
+      <div style="padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin-bottom:8px">${(cfg.path||"").split(" > ").map((part,pi,arr)=>`<div style="background:${pi===arr.length-1?"#FFF9C4":"#F7F5FB"};border:1px solid ${pi===arr.length-1?"#F9A825":"#E6E1F0"};border-radius:5px;padding:3px 9px;font-size:10.5px;font-weight:${pi===arr.length-1?700:500};color:${pi===arr.length-1?"#E65100":"#1B1340"}">${_bpdEsc(part)}</div>${pi<arr.length-1?`<span style="font-size:13px;color:#5B2FD4;margin:0 2px">&#8250;</span>`:""}`).join("")}</div>
+        <div style="font-size:11.5px;color:#6E6494;margin-bottom:8px">${_bpdEsc(cfg.purpose)}</div>
+        ${(cfg.keySettings||[]).map(s=>`<div style="display:flex;gap:0;border-radius:7px;overflow:hidden;border:1px solid #E6E1F0;margin-bottom:5px"><div style="background:#F7F5FB;padding:7px 11px;min-width:120px"><div style="font-size:8.5px;color:#9E96B8;font-weight:600">FIELD</div><div style="font-size:11px;font-weight:600;color:#1B1340">${_bpdEsc(s.field)}</div></div><div style="padding:0 6px;display:flex;align-items:center"><span style="color:#5B2FD4">&#8594;</span></div><div style="background:#FFF9C4;padding:7px 11px;min-width:80px"><div style="font-size:8.5px;color:#92400E;font-weight:600">VALUE</div><div style="font-size:11px;font-weight:700;color:#E65100">${_bpdEsc(s.value)}</div></div><div style="padding:0 6px;display:flex;align-items:center"><span style="color:#0FA968">&#8594;</span></div><div style="flex:1;padding:7px 11px"><div style="font-size:8.5px;color:#9E96B8;font-weight:600">IMPACT</div><div style="font-size:11px;color:#1B1340">${_bpdEsc(s.impact||"")}</div></div></div>`).join("")}
+      </div>
+    </div>`;
+  });
+  return html;
+}
+
+function _bpdRenderTab(tab) {
+  const d = window._bpd.data;
+  if (!d) return "<p style='color:#9E96B8'>No data</p>";
+  const hdr = (label, count) => `<div style="font-size:10px;font-weight:700;letter-spacing:2px;color:#5B2FD4;text-transform:uppercase;margin:20px 0 10px;border-bottom:2px solid #5B2FD4;padding-bottom:5px">${_bpdEsc(label)}${count!==undefined?` (${count})`:""}</div>`;
+
+  if (tab === "full") {
+    let html = _bpdL2Html(d);
+    if ((d.l3Areas||[]).length) { html += hdr("L3 — Process Areas", d.l3Areas.length); html += _bpdL3Html(d); }
+    if ((d.l4Activities||[]).length) { html += hdr("L4 — Detailed Activities", d.l4Activities.length); html += _bpdL4Html(d); }
+    if ((d.l5Config||[]).length) { html += hdr("L5 — Business Configuration", d.l5Config.length); html += _bpdL5Html(d); }
+    return html || "<p style='color:#9E96B8'>No data generated</p>";
+  }
+  if (tab === "overview") return _bpdL2Html(d) || "<p style='color:#9E96B8'>No L2 data</p>";
+  if (tab === "l3") {
+    if (!(d.l3Areas||[]).length) return "<p style='color:#9E96B8'>No L3 data</p>";
+    return hdr("L3 — Process Areas", d.l3Areas.length) + _bpdL3Html(d);
+  }
+  if (tab === "l4") {
+    if (!(d.l4Activities||[]).length) return "<p style='color:#9E96B8'>No L4 data</p>";
+    return hdr("L4 — Detailed Activities", d.l4Activities.length) + _bpdL4Html(d);
+  }
+  if (tab === "l5") {
+    if (!(d.l5Config||[]).length) return "<p style='color:#9E96B8'>No L5 data</p>";
+    return hdr("L5 — Business Configuration", d.l5Config.length) + _bpdL5Html(d);
+  }
+  if (tab === "e2e") {
+    if (!d.endToEndSwimlane) return "<p style='color:#9E96B8'>E2E swimlane not generated</p>";
+    return hdr("E2E — Master Process Swimlane") + _bpdSvg(d.endToEndSwimlane);
+  }
+  if (tab === "compare") {
+    let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
+    html += `<div><div style="background:#E53935;border-radius:8px;padding:8px 14px;color:white;font-weight:700;font-size:12px;margin-bottom:10px">AS-IS: Legacy Process</div>${_bpdSvg(d.asIsSwimlane||{lanes:[]})}</div>`;
+    html += `<div><div style="background:#5B2FD4;border-radius:8px;padding:8px 14px;color:white;font-weight:700;font-size:12px;margin-bottom:10px">TO-BE: S/4HANA Public Cloud</div>${_bpdSvg(d.endToEndSwimlane||{lanes:[]})}</div>`;
+    html += `</div>`;
+    const deltas=[["UI","SAP GUI &#8594; Fiori","#1E88E5"],["Automation","Batch &#8594; Real-time","#7B1FA2"],["Approvals","Email &#8594; Workflow","#2E7D32"],["Integration","RFC &#8594; OData/CPI","#E65100"]];
+    html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px">${deltas.map(([cat,desc,c])=>`<div style="background:#F8F6FF;border:1px solid #E6E1F0;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;font-weight:700;color:${c};margin-bottom:4px">${cat}</div><div style="font-size:11px;color:#9E96B8">${desc}</div></div>`).join("")}</div>`;
+    return html;
+  }
+  if (tab === "fts") {
+    const items = d.fts?.assessments || [];
+    if (!items.length) return "<p style='color:#9E96B8'>FTS data not generated</p>";
+    const fitColors = {FIT:"#0FA968",PARTIAL_FIT:"#D97706",GAP:"#DC2626"};
+    const fitBg = {FIT:"#ECFDF3",PARTIAL_FIT:"#FFFBEB",GAP:"#FEF2F2"};
+    return `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:#5B2FD4;color:white">
+        <th style="padding:8px 10px;text-align:left">ID</th>
+        <th style="padding:8px 10px;text-align:left">Scope Item</th>
+        <th style="padding:8px 10px;text-align:left">SAP Standard</th>
+        <th style="padding:8px 10px;text-align:left">Client Req</th>
+        <th style="padding:8px 10px;text-align:center">Assessment</th>
+        <th style="padding:8px 10px;text-align:left">Resolution</th>
+        <th style="padding:8px 10px;text-align:center">Effort</th>
+      </tr></thead>
+      <tbody>${items.map((a,i)=>{const c=fitColors[a.assessment]||"#9E96B8",bg=fitBg[a.assessment]||"#F7F5FB";return`<tr style="background:${i%2?"#F7F5FB":"white"};border-bottom:1px solid #E6E1F0">
+        <td style="padding:7px 10px;font-size:10.5px;font-weight:700;color:#5B2FD4">${_bpdEsc(a.id)}</td>
+        <td style="padding:7px 10px;font-size:11px">${_bpdEsc(a.scopeItem)}</td>
+        <td style="padding:7px 10px;font-size:11px;color:#6E6494">${_bpdEsc(a.standardProcess)}</td>
+        <td style="padding:7px 10px;font-size:11px">${_bpdEsc(a.clientRequirement)}</td>
+        <td style="padding:7px 10px;text-align:center"><span style="background:${bg};color:${c};border-radius:12px;padding:3px 9px;font-size:10px;font-weight:700">${_bpdEsc(a.assessment)}</span></td>
+        <td style="padding:7px 10px;font-size:11px">${_bpdEsc(a.resolution)}</td>
+        <td style="padding:7px 10px;text-align:center;font-size:11px;font-weight:700">${_bpdEsc(a.effort)}</td>
+      </tr>`}).join("")}</tbody>
+    </table></div>`;
+  }
+  if (tab === "next") {
+    const nx = d.next||{};
+    let html = "";
+    const thStyle = "padding:7px 10px;text-align:left;";
+    const tdStyle = "padding:7px 10px;font-size:11px;border-bottom:1px solid #E6E1F0;";
+    if ((nx.actionItems||[]).length) {
+      html += hdr("Action Items");
+      html += `<div style="overflow-x:auto;margin-bottom:20px"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:#5B2FD4;color:white"><th style="${thStyle}">ID</th><th style="${thStyle}">Action</th><th style="${thStyle}">Category</th><th style="${thStyle}">Owner</th><th style="${thStyle}">Phase</th><th style="${thStyle}">Priority</th></tr></thead>
+        <tbody>${(nx.actionItems||[]).map((a,i)=>{const pc=a.priority==="HIGH"?"#DC2626":a.priority==="MEDIUM"?"#D97706":"#0FA968";return`<tr style="background:${i%2?"#F7F5FB":"white"}"><td style="${tdStyle}font-weight:700;color:#5B2FD4">${_bpdEsc(a.id)}</td><td style="${tdStyle}">${_bpdEsc(a.action)}</td><td style="${tdStyle}color:#6E6494">${_bpdEsc(a.category)}</td><td style="${tdStyle}">${_bpdEsc(a.owner)}</td><td style="${tdStyle}">${_bpdEsc(a.phase)}</td><td style="${tdStyle}text-align:center"><span style="background:${pc}20;color:${pc};border-radius:10px;padding:2px 8px;font-size:10px;font-weight:700">${_bpdEsc(a.priority)}</span></td></tr>`;}).join("")}</tbody>
+      </table></div>`;
+    }
+    if ((nx.risks||[]).length) {
+      html += hdr("Risks & Mitigations");
+      html += `<div style="overflow-x:auto;margin-bottom:20px"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:#5B2FD4;color:white"><th style="${thStyle}">ID</th><th style="${thStyle}">Risk</th><th style="${thStyle}text-align:center">Prob</th><th style="${thStyle}text-align:center">Impact</th><th style="${thStyle}">Mitigation</th></tr></thead>
+        <tbody>${(nx.risks||[]).map((r,i)=>`<tr style="background:${i%2?"#F7F5FB":"white"}"><td style="${tdStyle}font-weight:700">${_bpdEsc(r.id)}</td><td style="${tdStyle}">${_bpdEsc(r.description)}</td><td style="${tdStyle}text-align:center;font-weight:700;color:#DC2626">${_bpdEsc(r.probability)}</td><td style="${tdStyle}text-align:center;font-weight:700;color:#D97706">${_bpdEsc(r.impact)}</td><td style="${tdStyle}color:#6E6494">${_bpdEsc(r.mitigation)}</td></tr>`).join("")}</tbody>
+      </table></div>`;
+    }
+    if ((nx.signOff||[]).length) {
+      html += hdr("Workshop Sign-Off");
+      html += `<table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:#5B2FD4;color:white"><th style="${thStyle}">SAP Role</th><th style="${thStyle}">Title</th><th style="${thStyle}">Responsibility</th><th style="${thStyle}">Signature</th><th style="${thStyle}">Date</th></tr></thead>
+        <tbody>${(nx.signOff||[]).map((so,i)=>`<tr style="background:${i%2?"#F7F5FB":"white"}"><td style="${tdStyle}font-weight:700;color:#5B2FD4">${_bpdEsc(so.role)}</td><td style="${tdStyle}">${_bpdEsc(so.title)}</td><td style="${tdStyle}">${_bpdEsc(so.responsibility)}</td><td style="${tdStyle};min-width:100px"></td><td style="${tdStyle};min-width:80px"></td></tr>`).join("")}</tbody>
+      </table>`;
+    }
+    return html || "<p style='color:#9E96B8'>Next steps not generated</p>";
+  }
+  return "<p style='color:#9E96B8'>Select a tab</p>";
+}
+
+window.bpdGenerate = async function() {
+  const desc = (document.getElementById("bpd-desc")?.value||"").trim();
+  const hasScope = (window._bpd.selectedIds||[]).length > 0;
+  if (desc.length < 20 && !hasScope) return;
+  // Cancel any previous in-flight generation
+  if (window._bpd.abortCtrl) window._bpd.abortCtrl.abort();
+  window._bpd.abortCtrl = new AbortController();
+  const f = window._bpd.form;
+  f.description  = desc;
+  f.projectName  = document.getElementById("bpd-projectName")?.value||f.projectName;
+  f.client       = document.getElementById("bpd-client")?.value||f.client;
+  f.module       = document.getElementById("bpd-module")?.value||f.module;
+  f.inScope      = document.getElementById("bpd-inScope")?.value||f.inScope;
+  f.stakeholders = document.getElementById("bpd-stakeholders")?.value||f.stakeholders;
+  f.integrations = document.getElementById("bpd-integrations")?.value||f.integrations;
+
+  document.getElementById("bpd-input-view").style.display="none";
+  document.getElementById("bpd-loading-view").style.display="";
+  document.getElementById("bpd-result-view").style.display="none";
+
+  // Start elapsed timer
+  const _timerEl = document.getElementById("bpd-timer");
+  const _timerStart = Date.now();
+  if(_timerEl) _timerEl.textContent = "0s";
+  const _timerInterval = setInterval(()=>{
+    if(!_timerEl) return;
+    const s = Math.floor((Date.now()-_timerStart)/1000);
+    _timerEl.textContent = s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+  }, 1000);
+
+  // Set phase labels based on path
+  const selectedIds = window._bpd.selectedIds || [];
+  const _groundedLabels = ["Loading SAP catalog data","Building L2/L3/L4 from real catalog","AI enrichment: Fiori IDs & roles","Creating L5 Business Configuration","Generating process swimlanes","Building E2E master swimlane","Fit-to-Standard assessment","Next Steps & action items","As-Is legacy process"];
+  const _aiLabels       = ["Building L2/L3/L4 structure","Mapping scope items & Fiori apps","Generating L5 Business Configuration","Creating swimlane diagrams","Building E2E master swimlane","Fit-to-Standard assessment","Next Steps & action items","As-Is legacy process","Assembling final documentation"];
+  const _phLabels = selectedIds.length > 0 ? _groundedLabels : _aiLabels;
+  _phLabels.forEach((s,i)=>{ const el=document.getElementById(`bpd-ph-lbl-${i}`); if(el) el.textContent=s; });
+
+  const setProgress = pct => {
+    window._bpd.progress = pct;
+    const bar=document.getElementById("bpd-prog-bar"), pctEl=document.getElementById("bpd-prog-pct");
+    if(bar) bar.style.width=pct+"%";
+    if(pctEl) pctEl.textContent=Math.round(pct)+"%";
+    for(let i=0;i<9;i++){
+      const ph=document.getElementById(`bpd-ph-${i}`),ic=document.getElementById(`bpd-ph-ic-${i}`);
+      if(ph) ph.style.opacity=pct>i*11?1:0.25;
+      if(ic&&pct>i*11+10){ic.textContent="✓";ic.style.color="#0FA968";}
+    }
+  };
+
+  async function callAI(prompt, maxTokens) {
+    const signal = window._bpd.abortCtrl?.signal;
+    const resp = await fetch("/api/bpd/proxy", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt,max_tokens:maxTokens||4096}), signal});
+    const d = await resp.json();
+    if(d.error) throw new Error(d.error);
+    if(!resp.ok) throw new Error(d.detail || `Server error ${resp.status}`);
+    return (d.content||[]).map(c=>c.text||"").join("");
+  }
+
+  const ctx = `Project: ${f.projectName||"SAP Project"} | Client: ${f.client||"Client"} | Module: ${f.module} | In-Scope: ${f.inScope||"All"} | Stakeholders: ${f.stakeholders||"N/A"} | Integrations: ${f.integrations||"None"}`;
+  let structure = null;
+
+  if (selectedIds.length > 0) {
+    // ── Catalog-grounded path ────────────────────────────────────────────────
+    try {
+      setProgress(8);
+      const ctxResp = await fetch("/api/bpd/catalog-context", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ process_ids: selectedIds, module: f.module })
+      });
+      const ctxData = await ctxResp.json();
+      window._bpd.catalogData = ctxData;
+      const procs = ctxData.processes || [];
+
+      const primaryProc = procs[0] || {};
+      // Derive KPIs from catalog businessBenefits (take first 5 unique benefits)
+      const _allBenefits = procs.flatMap(p => p.businessBenefits || []);
+      const _kpis = [...new Set(_allBenefits)].slice(0, 5);
+      const l2 = {
+        name:        primaryProc.l2 || primaryProc.name || f.module,
+        description: primaryProc.overview || f.description,
+        kpis:        _kpis,
+        scopeItems:  procs.map(p=>`${p.id} - ${p.name}`)
+      };
+
+      // L3 — one per selected process (up to 6), each with its own process-specific description
+      const l3Areas = procs.slice(0,6).map((p,i)=>({
+        id:`L3-00${i+1}`, name:p.name, scopeItem:`${p.id} - ${p.name}`,
+        description: p.overview
+          ? p.overview
+          : `${p.name} process area within ${p.l2 || f.module} — covers ${(p.l4||[]).slice(0,3).join(", ") || "key activities"}.`,
+        primaryRole:"SAP_BR_EMPLOYEE",
+        fioriApps:[], inputs:[], outputs:[], l4Refs:(p.l4||[]).slice(0,4)
+      }));
+
+      // L4 — from catalog l4 arrays
+      const l4Activities = [];
+      procs.slice(0,4).forEach((p,pi)=>{
+        (p.l4||[]).slice(0,3).forEach((l4name,li)=>{
+          l4Activities.push({
+            id:`L4-${String(pi*3+li+1).padStart(3,"0")}`, parentL3:`L3-00${pi+1}`,
+            scopeItem:`${p.id} - ${p.name}`, name:l4name,
+            role:"SAP_BR_EMPLOYEE", fioriApp:"See Fiori Launchpad", preconditions:[],
+            steps:[`Navigate to ${l4name} in SAP Fiori Launchpad`,"Enter required header data","Add line items","Review and validate","Submit for processing","Confirm completion"],
+            keyFields:[]
+          });
+        });
+      });
+
+      structure = { l2, l3Areas, l4Activities, l5Config:[] };
+      setProgress(22);
+
+      // AI enrichment: roles, Fiori IDs, L5 config
+      const l3List = l3Areas.map(a=>`${a.id}: "${a.name}" — ${a.scopeItem}`).join("\n");
+      const l4List = l4Activities.map(a=>`${a.id}: "${a.name}" — parent:${a.parentL3}`).join("\n");
+      const raw2 = await callAI(`${_BPD_PC_RULES}
+
+SAP S/4HANA Cloud Public Edition expert. Enrich this pre-built L3/L4 structure with real roles, Fiori IDs, and configuration.
+${ctx}
+Description: ${f.description.slice(0,400)}
+
+L3 Areas (from SAP catalog):
+${l3List}
+
+L4 Activities (from SAP catalog):
+${l4List}
+
+KDD Context:
+${(ctxData.kddContext||"").slice(0,2000)}
+
+F2S Config Steps:
+${(ctxData.f2sContext||"").slice(0,1500)}
+
+Return ONLY valid JSON — no markdown:
+{"l3Enriched":[{"id":"L3-001","primaryRole":"SAP_BR_...","description":"Process-level description DIFFERENT from the L2 overview — include specific variant in scope, business role, trigger event, and any ${f.client||"client"}-specific context","fioriApps":["App (F-XXXX)"],"inputs":["Input"],"outputs":["Output"]}],"l4Enriched":[{"id":"L4-001","role":"SAP_BR_...","fioriApp":"App (F-XXXX)","preconditions":["Condition"],"steps":["Step 1 in App (F-XXXX) — note any ${f.client||"client"}-specific requirement here"],"keyFields":[{"label":"","odata":"","entity":"A_Entity","mandatory":true}]}],"l5Config":[{"id":"L5-001","name":"","path":"Business Configuration > Area > Sub-Area","purpose":"","linkedL4":["L4-001"],"keySettings":[{"field":"","value":"","impact":""}]}]}
+
+RULES:
+(1) Real SAP_BR roles, real Fiori IDs from KDD context only — never invent F-IDs not in KDD context.
+(2) l3Enriched.description MUST be different from the L2 overview — write at the process variant level, mention ${f.client||"client"} and the specific implemented variant.
+(3) L4 steps must reference ${f.client||"client"} where a step is client-specific.
+(4) 6 steps per L4, 3 keyFields per L4, 6-8 L5 items.
+(5) L5 MUST include entries for: (a) any external system integration via SAP Integration Suite CPI, (b) output/forms management, (c) batch job scheduling via Application Jobs (F4234), (d) payment guarantee or financial guarantee procedure if payment processing is in scope, (e) standard document types (sales/purchase/delivery/billing as applicable). Do not limit L5 to only document types — cover all configuration work implied by the scope.
+(6) Use consistent SAP_BR role names: SAP_BR_BILLING_SPECIALIST for billing document creation (never SAP_BR_BILLING_CLERK), SAP_BR_SALES_REP for order creation, SAP_BR_SHIPPING_SPECIALIST for delivery. Use the same role name in L3, L4, and everywhere else.`, 4096);
+      setProgress(44);
+      try {
+        const enriched = _bpdSafeJSON(raw2)||{};
+        (enriched.l3Enriched||[]).forEach(e=>{
+          const a=structure.l3Areas.find(x=>x.id===e.id);
+          if(a){a.primaryRole=e.primaryRole||a.primaryRole;if(e.description)a.description=e.description;a.fioriApps=e.fioriApps||[];a.inputs=e.inputs||[];a.outputs=e.outputs||[];}
+        });
+        (enriched.l4Enriched||[]).forEach(e=>{
+          const a=structure.l4Activities.find(x=>x.id===e.id);
+          if(a){a.role=e.role||a.role;a.fioriApp=e.fioriApp||a.fioriApp;a.preconditions=e.preconditions||[];a.steps=e.steps||a.steps;a.keyFields=e.keyFields||[];}
+        });
+        structure.l5Config=Array.isArray(enriched.l5Config)?enriched.l5Config:(enriched.l5Config?.l5Config||[]);
+      } catch(_) {}
+
+      // Swimlanes
+      setProgress(52);
+      const areaList=structure.l3Areas.map(a=>`${a.id}: "${a.name}" — role:${a.primaryRole}, apps:${(a.fioriApps||[]).join(", ")}`).join("\n");
+      const firstId=structure.l3Areas[0]?.id||"L3-001";
+      const raw3 = await callAI(`SAP S/4HANA Cloud Public Edition BPMN expert. Generate swimlane JSON for each process area.
+
+Process areas:
+${areaList}
+Module: ${f.module}
+
+Return ONLY a JSON object keyed by area ID. No markdown.
+
+{"${firstId}":{"title":"${firstId}: Name — Scope","lanes":[{"role":"SAP_BR_XXX","steps":[{"type":"S","text":"Opens App (F-ID)"},{"type":"D","text":"Decision?"},{"type":"Y","text":"YES path"},{"type":"N","text":"NO path"}]},{"role":"S/4HANA System","steps":[{"type":"A","text":"Auto check"},{"type":"A","text":"Auto post"}]}]}}
+
+RULES: 2-3 lanes per area, 4-6 steps per lane, S steps must include Fiori app + F-ID, D always followed by Y and N.`, 4096);
+      setProgress(70);
+      try {
+        const sw=_bpdSafeJSON(raw3)||{};
+        structure.l3Areas.forEach(a=>{if(sw[a.id])a.swimlane=sw[a.id];});
+      } catch(_) {}
+
+      // E2E swimlane
+      setProgress(74);
+      const e2eAreas=structure.l3Areas.map(a=>`${a.id}: ${a.name} (${a.scopeItem})`).join(", ");
+      const raw4 = await callAI(`SAP S/4HANA Cloud Public Edition BPMN expert. Generate ONE end-to-end process swimlane.
+
+E2E Process: ${structure.l2?.name||f.module}
+Module: ${f.module} | Areas: ${e2eAreas}
+
+Return ONLY JSON. No markdown.
+
+{"title":"End-to-End: ${structure.l2?.name||f.module}","lanes":[{"role":"SAP_BR_INITIATOR","steps":[{"type":"S","text":"Step in App (F-ID)"},{"type":"D","text":"Decision?"},{"type":"Y","text":"YES"},{"type":"N","text":"NO"}]},{"role":"S/4HANA System","steps":[{"type":"A","text":"Auto action"}]},{"role":"SAP_BR_APPROVER","steps":[{"type":"S","text":"Reviews in App (F-ID)"},{"type":"S","text":"Approves"}]}]}
+
+RULES: 3-4 lanes, 5-7 steps per lane, S steps MUST have Fiori app + F-ID.`, 4096);
+      setProgress(86);
+      try { structure.endToEndSwimlane=_bpdSafeJSON(raw4); } catch(_) {}
+
+      // Parallel: FTS + Next Steps + As-Is
+      setProgress(88);
+      const procNames=procs.map(p=>`${p.id}: ${p.name}`).join("; ");
+      const [rawFTS,rawNext,rawAsIs] = await Promise.all([
+        callAI(`${_BPD_PC_RULES}\n\nFit-to-Standard assessment. Return ONLY JSON.\nProject: ${f.projectName} | Client: ${f.client||"Client"} | Module: ${f.module} | Scope: ${procNames.slice(0,400)}\nF2S: ${(ctxData.f2sContext||"").slice(0,800)}\n\n{"assessments":[{"id":"FTS-001","scopeItem":"Scope item name","description":"What specific capability/config decision is being assessed","standardProcess":"What SAP S/4HANA Cloud PE delivers standard","clientRequirement":"What the client needs","assessment":"FIT","delta":"","resolution":"Accept Standard","configPath":"Business Configuration > Area > Activity","effort":"S","priority":"HIGH","recommendation":"","idealAction":""}]}\n\nSTRICT RULES:\n(1) FIT + Accept Standard → effort MUST be S. Never M/L/XL for a straight FIT.\n(2) PARTIAL_FIT → resolution MUST be Configure, Process Change, Workaround, or Extend-Tier-N. NEVER Accept Standard for PARTIAL_FIT.\n(3) GAP → effort L or XL. Resolution must be Extend-Tier-N or Process Redesign.\n(4) Cover ALL aspects of this ${f.module} process: ${_bpdFtsCoverage(f.module)} — do not focus on just one area.\n(5) 12-15 items minimum. Use actual scope item names from Scope field.\n(6) If a PARTIAL_FIT/Configure item requires activating an ADDITIONAL scope item beyond what is already in Scope (e.g. digital payments requires 1Z1, payment media requires JG1, advanced credit management requires UKM), the delta field MUST state: "Requires activation of scope item [ID] — [name]" and effort should reflect the additional scope item work.`,4096).catch(()=>"{}"),
+        callAI(`${_BPD_PC_RULES}\n\nNext steps, risks, sign-off. Return ONLY JSON.\nProject: ${f.projectName} | Module: ${f.module} | Scope: ${procNames.slice(0,300)}\n\n{"actionItems":[{"id":"ACT-001","action":"","category":"Config","owner":"","phase":"Realize","dueWeeks":"Go-live -8w","priority":"HIGH","deliverable":""}],"risks":[{"id":"RISK-001","description":"","probability":"HIGH","impact":"HIGH","mitigation":"","owner":""}],"signOff":[{"role":"SAP_BR_XXX","title":"","responsibility":""}]}\n\n10+ actions, 4+ risks, 5+ signoff.\nFiori app rule: if you reference a Fiori app in an action, you MUST use the exact F-ID that appeared in the L2-L4 structure above. NEVER invent or guess an F-ID. If unsure of the ID, describe the action without an app reference.\nRole rule: sign-off roles MUST match the SAP_BR role names used in L3/L4 above. Use SAP_BR_BILLING_SPECIALIST (not SAP_BR_BILLING_CLERK) for billing, SAP_BR_SALES_REP for order creation, SAP_BR_SHIPPING_SPECIALIST for delivery.`,4096).catch(()=>"{}"),
+        callAI(`As-Is (legacy) swimlane BEFORE SAP S/4HANA. Module: ${f.module}. Description: ${f.description.slice(0,400)}.\n\nReturn ONLY JSON.\n{"title":"As-Is: Legacy Process","lanes":[{"role":"End User","steps":[{"type":"S","text":"Manual step"},{"type":"D","text":"Check?"},{"type":"Y","text":"Yes"},{"type":"N","text":"No"}]},{"role":"Legacy System","steps":[{"type":"A","text":"Batch job"}]},{"role":"Manager/Approver","steps":[{"type":"S","text":"Email approval"}]}]}\n\n3 lanes, 4-5 steps per lane, show manual/Excel/email pain points.`,4096).catch(()=>"{}")
+      ]);
+      setProgress(98);
+      if (window._bpd.abortCtrl?.signal.aborted) return; // cancelled during parallel phase
+      try { structure.fts=_bpdSafeJSON(rawFTS)||{}; } catch(_) {}
+      try { structure.next=_bpdSafeJSON(rawNext)||{}; } catch(_) {}
+      try { structure.asIsSwimlane=_bpdSafeJSON(rawAsIs)||{}; } catch(_) {}
+
+    } catch(err) {
+      if (err.name === "AbortError") return; // intentional cancel — no banner
+      clearInterval(_timerInterval);
+      const errBanner=document.getElementById("bpd-error-banner");
+      document.getElementById("bpd-loading-view").style.display="none";
+      document.getElementById("bpd-input-view").style.display="";
+      if(errBanner) errBanner.innerHTML=`<div style="background:#FEF2F2;color:#DC2626;padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:13px;font-weight:600">&#9888; Generation failed: ${_bpdEsc(err.message)}</div>`;
+      return;
+    }
+
+  } else {
+    // ── Pure-AI fallback (no scope items selected) ───────────────────────────
+    try {
+      setProgress(5);
+      const raw1 = await callAI(`${_BPD_PC_RULES}
+
+SAP S/4HANA PUBLIC CLOUD Process Architect. Generate L2, L3, and L4 structure as JSON.
+${ctx}
+Description: ${f.description}
+
+Return ONLY valid JSON — no markdown, no backticks. Start with { end with }.
+
+{"l2":{"name":"","description":"","kpis":[],"scopeItems":["BD9 - Sell from Stock"]},"l3Areas":[{"id":"L3-001","name":"","scopeItem":"BD9 - Sell from Stock","description":"","primaryRole":"SAP_BR_...","fioriApps":["App (F-ID)"],"inputs":[],"outputs":[]}],"l4Activities":[{"id":"L4-001","parentL3":"L3-001","scopeItem":"BD9 - Sell from Stock","name":"","role":"SAP_BR_...","fioriApp":"App (F-ID)","preconditions":[],"steps":["Step 1"],"keyFields":[{"label":"","odata":"","entity":"A_...","mandatory":true}]}]}
+
+RULES: 4 l3Areas, 4 l4Activities, 6+ steps each, 3 keyFields each, real scope item IDs, every Fiori app must include (F-ID).`, 4096);
+      setProgress(26);
+      structure = _bpdSafeJSON(raw1);
+      if(!structure) throw new Error("Could not parse L2/L3/L4 response. Try again.");
+      if(!structure.l3Areas) structure.l3Areas=[];
+      if(!structure.l4Activities) structure.l4Activities=[];
+      structure.l5Config=[];
+
+      setProgress(28);
+      const l4ListAI=(structure.l4Activities||[]).map(a=>`${a.id}: ${a.name} (${a.fioriApp||""})`).join(", ");
+      const raw2 = await callAI(`${_BPD_PC_RULES}
+
+SAP S/4HANA PUBLIC CLOUD Configuration Expert. Generate L5 Business Configuration items.
+Module: ${f.module} | In-Scope: ${f.inScope||"All"}
+Description: ${(f.description||"").slice(0,400)}
+L4 Activities: ${l4ListAI}
+
+Return ONLY a JSON array — no markdown. Start with [ end with ].
+
+[{"id":"L5-001","name":"","scopeItem":"","path":"Business Configuration > Area > Sub-Area > Activity","purpose":"","linkedL4":["L4-001"],"keySettings":[{"field":"","value":"","impact":""}]}]
+
+RULES: 6 items, every path starts with "Business Configuration >", each item 2-3 keySettings.`, 4096);
+      setProgress(50);
+      try {
+        const l5p=_bpdSafeJSON(raw2);
+        structure.l5Config=Array.isArray(l5p)?l5p:(l5p?.l5Config||l5p?.config||[]);
+      } catch(_) { structure.l5Config=[]; }
+
+      setProgress(52);
+      const areas=[
+        ...(structure.l3Areas||[]).map(a=>({id:a.id,name:a.name,role:a.primaryRole,apps:(a.fioriApps||[]).join(", ")})),
+        ...(structure.l4Activities||[]).slice(0,4).map(a=>({id:a.id,name:a.name,role:a.role,apps:a.fioriApp||""}))
+      ];
+      const areaList=areas.map(a=>`${a.id}: "${a.name}" — role: ${a.role}, apps: ${a.apps}`).join("\n");
+      const firstId=areas[0]?.id||"L3-001";
+      const raw3 = await callAI(`SAP S/4HANA PUBLIC CLOUD BPMN expert. Generate swimlane JSON for each process area.
+
+Process areas:
+${areaList}
+Module: ${f.module}
+
+Return ONLY a JSON object keyed by area ID. No markdown. Start with { end with }.
+
+{"${firstId}":{"title":"${firstId}: Name — Scope","lanes":[{"role":"SAP_BR_XXX","steps":[{"type":"S","text":"Opens App (F-ID)"},{"type":"D","text":"Decision?"},{"type":"Y","text":"YES path"},{"type":"N","text":"NO path"}]},{"role":"S/4HANA System","steps":[{"type":"A","text":"Auto check"},{"type":"A","text":"Auto post"}]}]}}
+
+RULES: 2-3 lanes, 4-6 steps per lane, S steps must include Fiori app + F-ID, D always followed by Y and N.`, 4096);
+      setProgress(74);
+      try {
+        const sw=_bpdSafeJSON(raw3)||{};
+        (structure.l3Areas||[]).forEach(a=>{if(sw[a.id])a.swimlane=sw[a.id];});
+        (structure.l4Activities||[]).forEach(a=>{if(sw[a.id])a.swimlane=sw[a.id];});
+      } catch(_) {}
+
+      setProgress(76);
+      const e2eAreas=(structure.l3Areas||[]).map(a=>`${a.id}: ${a.name} (${a.scopeItem})`).join(", ");
+      const raw4 = await callAI(`SAP S/4HANA PUBLIC CLOUD BPMN expert. Generate ONE end-to-end process swimlane.
+
+E2E Process: ${structure.l2?.name||f.module}
+Module: ${f.module} | Areas: ${e2eAreas}
+
+Return ONLY JSON. No markdown. Start with { end with }.
+
+{"title":"End-to-End: ${structure.l2?.name||f.module} — Full Happy Path","lanes":[{"role":"SAP_BR_INITIATOR","steps":[{"type":"S","text":"Step in App (F-ID)"},{"type":"D","text":"Decision?"},{"type":"Y","text":"YES"},{"type":"N","text":"NO"}]},{"role":"S/4HANA System","steps":[{"type":"A","text":"Auto action"},{"type":"A","text":"Auto post"}]},{"role":"SAP_BR_APPROVER","steps":[{"type":"S","text":"Reviews in App (F-ID)"},{"type":"S","text":"Approves"}]}]}
+
+RULES: 3-4 lanes, 5-7 steps per lane, S steps MUST have Fiori app + F-ID, 2+ decision points.`, 4096);
+      setProgress(89);
+      try { structure.endToEndSwimlane=_bpdSafeJSON(raw4); } catch(_) {}
+
+      setProgress(90);
+      const [rawFTS,rawNext,rawAsIs] = await Promise.all([
+        callAI(`${_BPD_PC_RULES}\n\nFit-to-Standard assessment. Return ONLY JSON.\nProject: ${f.projectName} | Client: ${f.client||"Client"} | Module: ${f.module} | In-Scope: ${f.inScope}\nDescription: ${(f.description||"").slice(0,500)}\n\n{"assessments":[{"id":"FTS-001","scopeItem":"Scope item name","description":"What specific capability/config decision is being assessed","standardProcess":"What SAP Cloud PE delivers standard","clientRequirement":"What the client needs","assessment":"FIT","delta":"","resolution":"Accept Standard","configPath":"Business Configuration > Area > Activity","effort":"S","priority":"HIGH","recommendation":"","idealAction":""}]}\n\nSTRICT RULES:\n(1) FIT + Accept Standard → effort MUST be S.\n(2) PARTIAL_FIT → resolution MUST be Configure, Process Change, Workaround, or Extend-Tier-N. NEVER Accept Standard.\n(3) GAP → effort L or XL.\n(4) Cover ALL aspects of this ${f.module} process: ${_bpdFtsCoverage(f.module)} — do not focus on just one area.\n(5) 12-15 items minimum.\n(6) If a PARTIAL_FIT/Configure item requires activating an ADDITIONAL scope item beyond what is already in scope (e.g. digital payments = 1Z1, payment media = JG1, advanced credit = UKM), the delta field MUST state: "Requires activation of scope item [ID] — [name]" and effort should reflect that additional scope item work.`,4096).catch(()=>"{}"),
+        callAI(`${_BPD_PC_RULES}\n\nNext steps, risks, sign-off. Return ONLY JSON.\nProject: ${f.projectName} | Module: ${f.module}\nDescription: ${(f.description||"").slice(0,400)}\n\n{"actionItems":[{"id":"ACT-001","action":"","category":"Config","owner":"","phase":"Realize","dueWeeks":"Go-live -8w","priority":"HIGH","deliverable":""}],"risks":[{"id":"RISK-001","description":"","probability":"HIGH","impact":"HIGH","mitigation":"","owner":""}],"signOff":[{"role":"SAP_BR_XXX","title":"","responsibility":""}]}\n\n10+ actions, 4+ risks, 5+ signoff.\nFiori app rule: if you reference a Fiori app in an action, you MUST use the exact F-ID that appeared in the L2-L4 structure above. NEVER invent or guess an F-ID. If unsure of the ID, describe the action without an app reference.\nRole rule: sign-off roles MUST match the SAP_BR role names used in L3/L4 above. Use SAP_BR_BILLING_SPECIALIST (not SAP_BR_BILLING_CLERK) for billing, SAP_BR_SALES_REP for order creation, SAP_BR_SHIPPING_SPECIALIST for delivery.`,4096).catch(()=>"{}"),
+        callAI(`As-Is (legacy) process swimlane BEFORE SAP S/4HANA. Module: ${f.module}. Description: ${(f.description||"").slice(0,400)}.\n\nReturn ONLY JSON. Start with { end with }.\n{"title":"As-Is: Legacy Process","lanes":[{"role":"End User","steps":[{"type":"S","text":"Manual step"},{"type":"D","text":"Check?"},{"type":"Y","text":"Yes"},{"type":"N","text":"No"}]},{"role":"Legacy System","steps":[{"type":"A","text":"Batch job"},{"type":"A","text":"Nightly update"}]},{"role":"Manager/Approver","steps":[{"type":"S","text":"Email approval"},{"type":"S","text":"Manual sign-off"}]}]}\n\n3 lanes, 4-5 steps per lane, reference manual steps/Excel/email pain points.`,4096).catch(()=>"{}")
+      ]);
+      setProgress(98);
+      if (window._bpd.abortCtrl?.signal.aborted) return; // cancelled during parallel phase
+      try { structure.fts=_bpdSafeJSON(rawFTS)||{}; } catch(_) {}
+      try { structure.next=_bpdSafeJSON(rawNext)||{}; } catch(_) {}
+      try { structure.asIsSwimlane=_bpdSafeJSON(rawAsIs)||{}; } catch(_) {}
+
+    } catch(err) {
+      if (err.name === "AbortError") return; // intentional cancel — no banner
+      clearInterval(_timerInterval);
+      const errBanner=document.getElementById("bpd-error-banner");
+      document.getElementById("bpd-loading-view").style.display="none";
+      document.getElementById("bpd-input-view").style.display="";
+      if(errBanner) errBanner.innerHTML=`<div style="background:#FEF2F2;color:#DC2626;padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:13px;font-weight:600">&#9888; Generation failed: ${_bpdEsc(err.message)}</div>`;
+      return;
+    }
+  }
+
+  // ── Finalise & render ────────────────────────────────────────────────────────
+  clearInterval(_timerInterval);
+  setProgress(100);
+  window._bpd.data = structure;
+  // Persist so all three export formats always use the same generated data
+  try {
+    localStorage.setItem("bpd_last_data", JSON.stringify(structure));
+    localStorage.setItem("bpd_last_form", JSON.stringify(f));
+  } catch(e) {
+    if (e && (e.name === "QuotaExceededError" || e.code === 22)) {
+      // Storage full — save a stripped version without swimlane SVG data
+      try {
+        const slim = {...structure, endToEndSwimlane:null, asIsSwimlane:null,
+          l3Areas:(structure.l3Areas||[]).map(a=>({...a,swimlane:null}))};
+        localStorage.setItem("bpd_last_data", JSON.stringify(slim));
+        localStorage.setItem("bpd_last_form", JSON.stringify(f));
+      } catch(_) {
+        console.warn("BPD: localStorage full, session will not persist across page loads");
+      }
+    }
+  }
+
+  const titleEl=document.getElementById("bpd-result-title");
+  const subEl=document.getElementById("bpd-result-sub");
+  if(titleEl) titleEl.textContent=structure.l2?.name||"Process Documentation";
+  if(subEl) subEl.textContent=`${f.projectName||""} · ${f.client||""} · ${f.module}${selectedIds.length>0?" · Grounded":""}`;
+
+  document.getElementById("bpd-loading-view").style.display="none";
+  document.getElementById("bpd-result-view").style.display="";
+
+  window._bpd.activeTab="full";
+  document.querySelectorAll(".bpd-tab-btn").forEach(btn=>{btn.classList.toggle("active",btn.dataset.tab==="full");});
+  const tc=document.getElementById("bpd-tab-content");
+  if(tc) tc.innerHTML=_bpdRenderTab("full");
+};
+
+function _bpdRawSvg(swimlane) {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = _bpdSvg(swimlane);
+  const el = tmp.querySelector("svg");
+  if (!el) return "";
+  // Preserve viewBox aspect ratio: set width=100%, height from viewBox
+  const vb = (el.getAttribute("viewBox") || "").split(/\s+/);
+  const vbW = parseFloat(vb[2]) || 1200;
+  const vbH = parseFloat(vb[3]) || 400;
+  // aspect ratio as CSS padding-bottom trick ensures correct height on print
+  el.setAttribute("width","100%");
+  el.setAttribute("height","auto");
+  el.style.display = "block";
+  el.style.maxWidth = "100%";
+  // Wrap in a div that enforces aspect ratio so print doesn't collapse the height
+  const aspectPct = (vbH / vbW * 100).toFixed(2);
+  return `<div style="position:relative;width:100%;padding-bottom:${aspectPct}%;overflow:hidden"><div style="position:absolute;top:0;left:0;width:100%;height:100%">${el.outerHTML}</div></div>`;
+}
+
+window.bpdExportPDF = function() {
+  const d = window._bpd.data, f = window._bpd.form;
+  if (!d) { alert("No data. Generate first."); return; }
+  const now = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});
+  const ACC = "#5B2FD4", esc = _bpdEsc;
+
+  const h2 = (t,c) => `<h2 style="color:${c||ACC};border-bottom:2px solid ${c||ACC};padding-bottom:5px;margin:28px 0 10px;font-family:Georgia,serif;font-size:15pt">${esc(t)}</h2>`;
+  const tbl = (headers, rows, colStyle) => {
+    let s=`<table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>`;
+    rows.forEach((r,i)=>{ s+=`<tr>${r.map((c,ci)=>`<td style="${colStyle?.[ci]||""}">${c}</td>`).join("")}</tr>`; });
+    return s+`</tbody></table>`;
+  };
+
+  let body = `
+  <!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>${esc(f.projectName||"BPD")} — SAP BPD</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Calibri,Arial,sans-serif;font-size:10.5pt;color:#1B1340;line-height:1.55}
+    @page{margin:14mm 16mm;size:A4 landscape}
+    @media print{.pb{page-break-before:always}.nb{page-break-inside:avoid}}
+    .cover{background:linear-gradient(135deg,#460073,#A100FF);color:#fff;padding:55px 44px 44px;margin-bottom:28px}
+    .cover h1{font-size:26pt;font-family:Georgia,serif;margin-bottom:10px}
+    .cover .sub{font-size:13pt;opacity:.88;margin-bottom:6px}
+    .cover .meta{font-size:10pt;opacity:.7;margin-top:16px}
+    h2{color:${ACC};border-bottom:2px solid ${ACC};padding-bottom:5px;margin:28px 0 10px;font-family:Georgia,serif;font-size:14pt}
+    h3{color:${ACC};font-size:11pt;margin:14px 0 4px}
+    p{margin-bottom:7px}
+    .muted{color:#6E6494;font-size:9.5pt}
+    table{width:100%;border-collapse:collapse;margin:10px 0;font-size:9pt}
+    th{background:${ACC};color:#fff;padding:6px 8px;text-align:left;font-size:8.5pt}
+    td{padding:5px 8px;border:1px solid #E6E1F0;vertical-align:top}
+    tr:nth-child(even) td{background:#F8F6FF}
+    ol{padding-left:20px;margin:8px 0}li{margin-bottom:3px}
+    .kpi{display:inline-block;background:#EDE8FF;color:${ACC};border-radius:4px;padding:2px 9px;font-size:9pt;font-weight:600;margin:2px}
+    .tag{display:inline-block;background:#F0EBFF;color:${ACC};border-radius:4px;padding:1px 7px;font-size:8.5pt;margin:2px}
+    .fit{color:#0FA968;font-weight:700}.gap{color:#DC2626;font-weight:700}.partial{color:#D97706;font-weight:700}
+    svg{display:block;width:100%;height:auto;margin:12px 0}
+    .swimlane-section{margin:16px 0}
+    .sw-title{background:#263238;color:#80CBC4;font-size:9pt;font-weight:700;padding:4px 10px;border-radius:6px 6px 0 0}
+    .sw-wrap{border:1.5px solid #90A4AE;border-radius:0 0 6px 6px;overflow:hidden}
+  </style></head><body>`;
+
+  // Cover
+  body += `<div class="cover">
+    <div style="font-size:8pt;letter-spacing:3px;font-weight:700;opacity:.75;margin-bottom:14px">ACCENTURE SAP PRACTICE</div>
+    <h1>${esc(f.projectName||"SAP Workshop")}</h1>
+    <div class="sub">SAP S/4HANA Public Cloud — Business Process Documentation</div>
+    <div class="meta">${esc(f.client||"")} &nbsp;·&nbsp; ${esc(f.module)} &nbsp;·&nbsp; ${now}</div>
+  </div>`;
+
+  // Process Requirement (uploaded/entered description)
+  if (f.description && f.description.trim()) {
+    body += `<div class="nb" style="margin-bottom:20px">`;
+    body += `<h2 style="color:${ACC};border-bottom:2px solid ${ACC};padding-bottom:5px;margin:0 0 12px;font-family:Georgia,serif;font-size:14pt">Process Requirement</h2>`;
+    body += `<p class="muted" style="margin-bottom:8px">Client requirement document — source context used to generate this BPD</p>`;
+    body += `<div style="white-space:pre-wrap;background:#F8F6FF;border-left:4px solid ${ACC};padding:14px 18px;border-radius:0 8px 8px 0;font-size:10pt;line-height:1.7;color:#1B1340">${esc(f.description.trim())}</div>`;
+    body += `</div>`;
+  }
+
+  // Selected Scope Items from catalog
+  const _catData = window._bpd?.catalogData;
+  const _catProcs = _catData?.processes || [];
+  if (_catProcs.length > 0) {
+    body += `<div class="nb" style="margin-bottom:20px">`;
+    body += `<h2 style="color:${ACC};border-bottom:2px solid ${ACC};padding-bottom:5px;margin:0 0 12px;font-family:Georgia,serif;font-size:14pt">Scope Items Selected</h2>`;
+    body += `<table><thead><tr><th>ID</th><th>Process Name</th><th>L1 (LOB)</th><th>L2 (Area)</th></tr></thead><tbody>`;
+    body += _catProcs.map((p,i) => `<tr><td style="font-weight:700;color:${ACC};width:70px">${esc(p.id)}</td><td>${esc(p.name)}</td><td>${esc(p.l1)}</td><td>${esc(p.l2)}</td></tr>`).join("");
+    body += `</tbody></table>`;
+    if (_catData.f2sContext) {
+      body += `<p class="muted" style="margin-top:8px;font-size:9pt">✓ Grounded with SAP F2S catalog context · ${_catProcs.length} process${_catProcs.length!==1?"es":""} from scope-catalog-f2s.json</p>`;
+    }
+    body += `</div>`;
+  }
+
+  // L2
+  if(d.l2){
+    body+=h2("L2: "+d.l2.name);
+    body+=`<p>${esc(d.l2.description)}</p>`;
+    if(d.l2.scopeItems?.length) body+=`<p><strong>Scope Items:</strong> ${d.l2.scopeItems.map(s=>`<span class="tag">${esc(s)}</span>`).join(" ")}</p>`;
+    if(d.l2.kpis?.length) body+=`<p>${d.l2.kpis.map(k=>`<span class="kpi">${esc(k)}</span>`).join(" ")}</p>`;
+  }
+
+  // L3 areas — each with its own swimlane if available
+  (d.l3Areas||[]).forEach(a=>{
+    body+=`<div class="nb">`;
+    body+=h2("L3: "+a.name);
+    body+=`<p class="muted">${esc(a.id)} &middot; ${esc(a.scopeItem)} &middot; ${esc(a.primaryRole)}</p>`;
+    body+=`<p>${esc(a.description)}</p>`;
+    if(a.fioriApps?.length) body+=`<p><strong>Fiori Apps:</strong> ${a.fioriApps.map(x=>`<span class="tag">${esc(x)}</span>`).join(" ")}</p>`;
+    if(a.inputs?.length) body+=`<p><strong>Inputs:</strong> ${a.inputs.map(esc).join(" &nbsp;|&nbsp; ")}</p>`;
+    if(a.outputs?.length) body+=`<p><strong>Outputs:</strong> ${a.outputs.map(esc).join(" &nbsp;|&nbsp; ")}</p>`;
+    if(a.swimlane?.lanes?.length){
+      body+=`<div class="swimlane-section"><div class="sw-title">BPMN 2.0 — Process Swimlane</div><div class="sw-wrap">${_bpdRawSvg(a.swimlane)}</div></div>`;
+    }
+    body+=`</div>`;
+  });
+
+  // L4 activities
+  body+=`<div class="pb">`;
+  (d.l4Activities||[]).forEach(a=>{
+    body+=`<div class="nb">`;
+    body+=h2("L4: "+a.name);
+    body+=`<p class="muted">${esc(a.id)} &middot; ${esc(a.fioriApp)} &middot; ${esc(a.role)}</p>`;
+    if(a.preconditions?.length) body+=`<p><strong>Preconditions:</strong> ${a.preconditions.map(esc).join("; ")}</p>`;
+    body+=`<ol>${(a.steps||[]).map(s=>`<li>${esc(s)}</li>`).join("")}</ol>`;
+    if(a.keyFields?.length){
+      body+=tbl(["Field","OData Property","Mandatory"],
+        a.keyFields.map(kf=>[esc(kf.label),esc(kf.odata),kf.mandatory?"Yes":"No"]),
+        ["font-weight:700","font-family:monospace;font-size:8pt","text-align:center"]);
+    }
+    body+=`</div>`;
+  });
+  body+=`</div>`;
+
+  // L5
+  if((d.l5Config||[]).length){
+    body+=`<div class="pb">`;
+    body+=h2("L5: Business Configuration");
+    body+=tbl(["ID","Name","Configuration Path","Purpose"],
+      d.l5Config.map(c=>[`<strong style="color:${ACC}">${esc(c.id)}</strong>`,esc(c.name),`<span style="color:#6E6494;font-size:8.5pt">${esc(c.path)}</span>`,esc(c.purpose)]),
+      ["width:60px","","",""]
+    );
+    body+=`</div>`;
+  }
+
+  // E2E Swimlane — raw SVG renders perfectly in browser PDF
+  if(d.endToEndSwimlane?.lanes?.length){
+    body+=`<div class="pb">`;
+    body+=h2("E2E Process Swimlane: "+(d.endToEndSwimlane.title||"End-to-End Process"));
+    body+=`<p class="muted">BPMN 2.0 — roles, steps, Fiori applications, decision points</p>`;
+    body+=`<div class="sw-wrap">${_bpdRawSvg(d.endToEndSwimlane)}</div>`;
+    body+=`</div>`;
+  }
+
+  // As-Is
+  if(d.asIsSwimlane?.lanes?.length){
+    body+=`<div class="pb">`;
+    body+=`<h2 style="color:#B71C1C;border-color:#B71C1C;font-family:Georgia,serif;font-size:14pt;padding-bottom:5px;margin:28px 0 10px">As-Is: Legacy Process</h2>`;
+    body+=`<p class="muted">Current state before SAP S/4HANA Cloud — showing manual steps, system pain points</p>`;
+    body+=`<div class="sw-wrap">${_bpdRawSvg(d.asIsSwimlane)}</div>`;
+    body+=`</div>`;
+  }
+
+  // FTS
+  if(d.fts?.assessments?.length){
+    body+=`<div class="pb">`;
+    body+=h2("Fit-to-Standard Assessment");
+    const fitColor=a=>a==="FIT"?"#0FA968":a==="GAP"?"#DC2626":"#D97706";
+    const fitBg=a=>a==="FIT"?"#ECFDF3":a==="GAP"?"#FEF2F2":"#FFFBEB";
+    body+=tbl(
+      ["ID","Scope Item","SAP Standard","Client Requirement","Assessment","Resolution","Effort","Recommendation"],
+      d.fts.assessments.map(a=>[
+        `<strong style="color:${ACC}">${esc(a.id)}</strong>`,
+        esc(a.scopeItem||a.description||""),
+        `<span style="color:#6E6494;font-size:8.5pt">${esc(a.standardProcess||"")}</span>`,
+        esc(a.clientRequirement||""),
+        `<span style="background:${fitBg(a.assessment)};color:${fitColor(a.assessment)};border-radius:10px;padding:2px 8px;font-weight:700;font-size:8pt">${esc(a.assessment)}</span>`,
+        esc(a.resolution),
+        `<strong>${esc(a.effort)}</strong>`,
+        `<span style="font-size:8.5pt;color:#374151">${esc(a.recommendation||a.idealAction||"")}</span>`
+      ]),
+      ["width:55px","","","","text-align:center;width:90px","","text-align:center;width:40px",""]
+    );
+    body+=`</div>`;
+  }
+
+  // Next Steps
+  const nx=d.next||{};
+  if((nx.actionItems||[]).length){
+    body+=`<div class="pb">`;
+    body+=h2("Next Steps: Action Items");
+    const pc=p=>p==="HIGH"?"#DC2626":p==="MEDIUM"?"#D97706":"#0FA968";
+    body+=tbl(["ID","Action","Category","Owner","Phase","Priority"],
+      nx.actionItems.map(a=>[
+        `<strong style="color:${ACC}">${esc(a.id)}</strong>`,
+        esc(a.action),esc(a.category),esc(a.owner),esc(a.phase),
+        `<strong style="color:${pc(a.priority)}">${esc(a.priority)}</strong>`
+      ]));
+    body+=`</div>`;
+  }
+  if((nx.risks||[]).length){
+    body+=h2("Risks & Mitigations");
+    body+=tbl(["ID","Risk","Probability","Impact","Mitigation"],
+      nx.risks.map(r=>[
+        `<strong>${esc(r.id)}</strong>`,
+        esc(r.description),
+        `<strong style="color:#DC2626">${esc(r.probability)}</strong>`,
+        `<strong style="color:#D97706">${esc(r.impact)}</strong>`,
+        esc(r.mitigation)
+      ]));
+  }
+  if((nx.signOff||[]).length){
+    body+=h2("Workshop Sign-Off");
+    body+=tbl(["SAP Role","Title","Responsibility","Signature","Date"],
+      nx.signOff.map(so=>[
+        `<strong style="color:${ACC}">${esc(so.role)}</strong>`,
+        esc(so.title),esc(so.responsibility),"&nbsp;","&nbsp;"
+      ]));
+  }
+
+  body+=`</body></html>`;
+
+  const win=window.open("","_blank","width=1200,height=900");
+  if(!win){alert("Please allow pop-ups for this page, then try again.");return;}
+  win.document.write(body);
+  win.document.close();
+  win.addEventListener("load",()=>{ win.focus(); win.print(); });
+};
+
+window.bpdDownloadWord = function() {
+  const d = window._bpd.data, f = window._bpd.form;
+  if (!d) return;
+  const now = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});
+  const ACC="#5B2FD4";
+  let body=`<h1 style="color:${ACC}">${_bpdEsc(f.projectName||"SAP Workshop")} &#8212; L2-L5 Process Documentation</h1>`;
+  body+=`<p style="color:#6E6494;font-size:10pt">${_bpdEsc(f.client)} &#183; ${_bpdEsc(f.module)} &#183; SAP S/4HANA Public Cloud &#183; ${now}</p><hr/>`;
+  // Process Requirement
+  if(f.description&&f.description.trim()){
+    body+=`<h2 style="color:${ACC}">Process Requirement</h2>`;
+    body+=`<p style="color:#6E6494;font-size:9.5pt;margin-bottom:6pt">Client requirement document — source context used to generate this BPD</p>`;
+    body+=`<div style="white-space:pre-wrap;background:#F8F6FF;border-left:4px solid ${ACC};padding:10pt 14pt;font-size:10pt;line-height:1.7">${_bpdEsc(f.description.trim())}</div><br/>`;
+  }
+  // Scope items from catalog
+  const _wCat=(window._bpd?.catalogData?.processes||[]);
+  if(_wCat.length>0){
+    body+=`<h2 style="color:${ACC}">Scope Items Selected</h2>`;
+    body+=`<table border="1" style="border-collapse:collapse;width:100%;font-size:10pt"><tr style="background:${ACC};color:white"><th>ID</th><th>Process Name</th><th>LOB</th><th>Area</th></tr>`;
+    body+=_wCat.map(p=>`<tr><td style="font-weight:700;color:#5B2FD4;padding:4px 8px">${_bpdEsc(p.id)}</td><td style="padding:4px 8px">${_bpdEsc(p.name)}</td><td style="padding:4px 8px">${_bpdEsc(p.l1)}</td><td style="padding:4px 8px">${_bpdEsc(p.l2)}</td></tr>`).join("");
+    body+=`</table><br/>`;
+  }
+  // L2
+  if(d.l2){body+=`<h2 style="color:${ACC}">L2: ${_bpdEsc(d.l2.name)}</h2><p>${_bpdEsc(d.l2.description)}</p>`;if(d.l2.scopeItems?.length)body+=`<p><b>Scope Items:</b> ${d.l2.scopeItems.map(_bpdEsc).join(" | ")}</p>`;if(d.l2.kpis?.length)body+=`<p><b>KPIs:</b> ${d.l2.kpis.map(_bpdEsc).join(" | ")}</p>`;}
+  // L3
+  (d.l3Areas||[]).forEach(a=>{body+=`<h2 style="color:${ACC}">L3: ${_bpdEsc(a.name)}</h2><p><b>${_bpdEsc(a.id)}</b> &middot; ${_bpdEsc(a.scopeItem)} &middot; ${_bpdEsc(a.primaryRole)}</p><p>${_bpdEsc(a.description)}</p>`;if(a.fioriApps?.length)body+=`<p><b>Fiori Apps:</b> ${a.fioriApps.map(_bpdEsc).join(", ")}</p>`;if(a.inputs?.length)body+=`<p><b>Inputs:</b> ${a.inputs.map(_bpdEsc).join(" | ")}</p>`;if(a.outputs?.length)body+=`<p><b>Outputs:</b> ${a.outputs.map(_bpdEsc).join(" | ")}</p>`;});
+  // L4
+  (d.l4Activities||[]).forEach(a=>{body+=`<h2 style="color:${ACC}">L4: ${_bpdEsc(a.name)}</h2><p><b>${_bpdEsc(a.id)}</b> &middot; ${_bpdEsc(a.fioriApp)} &middot; ${_bpdEsc(a.role)}</p>`;if(a.preconditions?.length)body+=`<p><b>Preconditions:</b> ${a.preconditions.map(_bpdEsc).join("; ")}</p>`;body+=`<ol>${(a.steps||[]).map(s=>`<li>${_bpdEsc(s)}</li>`).join("")}</ol>`;if(a.keyFields?.length)body+=`<table border="1" style="border-collapse:collapse;font-size:9pt;margin-bottom:8pt"><tr style="background:${ACC};color:white"><th>Field</th><th>OData</th><th>Mandatory</th></tr>${a.keyFields.map(kf=>`<tr><td>${_bpdEsc(kf.label)}</td><td>${_bpdEsc(kf.odata)}</td><td>${kf.mandatory?"Yes":"No"}</td></tr>`).join("")}</table>`;});
+  // L5
+  if((d.l5Config||[]).length){body+=`<h2 style="color:${ACC}">L5: Business Configuration</h2><table border="1" style="border-collapse:collapse;width:100%;font-size:10pt"><tr style="background:${ACC};color:white"><th>ID</th><th>Name</th><th>Configuration Path</th><th>Purpose</th></tr>${(d.l5Config||[]).map(c=>`<tr><td style="font-weight:700;color:#5B2FD4">${_bpdEsc(c.id)}</td><td>${_bpdEsc(c.name)}</td><td style="color:#6E6494;font-size:9pt">${_bpdEsc(c.path)}</td><td>${_bpdEsc(c.purpose)}</td></tr>`).join("")}</table>`;}
+  // E2E Swimlane — rendered as lane-by-lane step table
+  if(d.endToEndSwimlane?.lanes?.length){body+=`<h2 style="color:${ACC}">E2E Swimlane: ${_bpdEsc(d.endToEndSwimlane.title||"End-to-End Process")}</h2><table border="1" style="border-collapse:collapse;width:100%;font-size:9pt">`;body+=`<tr style="background:${ACC};color:white">${(d.endToEndSwimlane.lanes||[]).map(l=>`<th style="padding:5px 8px">${_bpdEsc(l.role||l.name)}</th>`).join("")}</tr>`;const maxSteps=Math.max(...(d.endToEndSwimlane.lanes||[]).map(l=>(l.steps||[]).length));for(let si=0;si<maxSteps;si++){body+=`<tr>${(d.endToEndSwimlane.lanes||[]).map(l=>{const st=(l.steps||[])[si];return st?`<td style="padding:4px 8px;vertical-align:top">${_bpdEsc(st.text||"")}</td>`:`<td></td>`}).join("")}</tr>`;}body+=`</table>`;}
+  // As-Is vs To-Be
+  if(d.asIsSwimlane?.lanes?.length){body+=`<h2 style="color:${ACC}">As-Is: Legacy Process</h2><table border="1" style="border-collapse:collapse;width:100%;font-size:9pt"><tr style="background:#B71C1C;color:white">${(d.asIsSwimlane.lanes||[]).map(l=>`<th style="padding:5px 8px">${_bpdEsc(l.role||l.name)}</th>`).join("")}</tr>`;const maxAS=Math.max(...(d.asIsSwimlane.lanes||[]).map(l=>(l.steps||[]).length));for(let si=0;si<maxAS;si++){body+=`<tr>${(d.asIsSwimlane.lanes||[]).map(l=>{const st=(l.steps||[])[si];return st?`<td style="padding:4px 8px;vertical-align:top">${_bpdEsc(st.text||"")}</td>`:`<td></td>`}).join("")}</tr>`;}body+=`</table>`;}
+  // FTS
+  if(d.fts?.assessments?.length){body+=`<h2 style="color:${ACC}">Fit-to-Standard Assessment</h2><table border="1" style="border-collapse:collapse;width:100%;font-size:9pt"><tr style="background:${ACC};color:white"><th>ID</th><th>Scope Item</th><th>SAP Standard</th><th>Client Requirement</th><th>Assessment</th><th>Resolution</th><th>Effort</th><th>Recommendation</th></tr>${(d.fts.assessments||[]).map(a=>`<tr><td style="font-weight:700;color:#5B2FD4;padding:4px 6px">${_bpdEsc(a.id)}</td><td style="padding:4px 6px">${_bpdEsc(a.scopeItem||a.description||"")}</td><td style="padding:4px 6px;color:#6E6494;font-size:8.5pt">${_bpdEsc(a.standardProcess||"")}</td><td style="padding:4px 6px">${_bpdEsc(a.clientRequirement||"")}</td><td style="padding:4px 6px;font-weight:700;color:${a.assessment==="FIT"?"#0FA968":a.assessment==="GAP"?"#DC2626":"#D97706"}">${_bpdEsc(a.assessment)}</td><td style="padding:4px 6px">${_bpdEsc(a.resolution)}</td><td style="padding:4px 6px;font-weight:700">${_bpdEsc(a.effort)}</td><td style="padding:4px 6px;font-size:8.5pt">${_bpdEsc(a.recommendation||a.idealAction||"")}</td></tr>`).join("")}</table>`;}
+  // Next Steps
+  const nx=d.next||{};
+  if((nx.actionItems||[]).length){body+=`<h2 style="color:${ACC}">Next Steps: Action Items</h2><table border="1" style="border-collapse:collapse;width:100%;font-size:10pt"><tr style="background:${ACC};color:white"><th>ID</th><th>Action</th><th>Category</th><th>Owner</th><th>Phase</th><th>Priority</th></tr>${(nx.actionItems||[]).map(a=>`<tr><td style="font-weight:700;color:#5B2FD4">${_bpdEsc(a.id)}</td><td>${_bpdEsc(a.action)}</td><td>${_bpdEsc(a.category)}</td><td>${_bpdEsc(a.owner)}</td><td>${_bpdEsc(a.phase)}</td><td style="font-weight:700;color:${a.priority==="HIGH"?"#DC2626":a.priority==="MEDIUM"?"#D97706":"#0FA968"}">${_bpdEsc(a.priority)}</td></tr>`).join("")}</table>`;}
+  if((nx.risks||[]).length){body+=`<h2 style="color:${ACC}">Risks &amp; Mitigations</h2><table border="1" style="border-collapse:collapse;width:100%;font-size:10pt"><tr style="background:${ACC};color:white"><th>ID</th><th>Risk</th><th>Probability</th><th>Impact</th><th>Mitigation</th></tr>${(nx.risks||[]).map(r=>`<tr><td style="font-weight:700">${_bpdEsc(r.id)}</td><td>${_bpdEsc(r.description)}</td><td>${_bpdEsc(r.probability)}</td><td>${_bpdEsc(r.impact)}</td><td>${_bpdEsc(r.mitigation)}</td></tr>`).join("")}</table>`;}
+  if((nx.signOff||[]).length){body+=`<h2 style="color:${ACC}">Workshop Sign-Off</h2><table border="1" style="border-collapse:collapse;width:100%;font-size:10pt"><tr style="background:${ACC};color:white"><th>SAP Role</th><th>Title</th><th>Responsibility</th><th>Signature</th><th>Date</th></tr>${(nx.signOff||[]).map(so=>`<tr><td style="font-weight:700;color:#5B2FD4">${_bpdEsc(so.role)}</td><td>${_bpdEsc(so.title)}</td><td>${_bpdEsc(so.responsibility)}</td><td style="min-width:120px">&nbsp;</td><td style="min-width:80px">&nbsp;</td></tr>`).join("")}</table>`;}
+  const blob=new Blob([`<!DOCTYPE html><html><head><meta charset="utf-8"/></head><body style="font-family:Calibri,sans-serif;font-size:11pt;color:#1B1340">${body}</body></html>`],{type:"application/msword"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${(f.projectName||"SAP").replace(/\s+/g,"-")}_L2-L5_${new Date().toISOString().slice(0,10)}.doc`;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+};
+
+function _bpdSvgToDataUrl(swimlane) {
+  return new Promise(resolve => {
+    try {
+      const tmp = document.createElement("div");
+      tmp.style.cssText = "position:absolute;left:-9999px;top:-9999px";
+      document.body.appendChild(tmp);
+      tmp.innerHTML = _bpdSvg(swimlane);
+      const svgEl = tmp.querySelector("svg");
+      if (!svgEl) { document.body.removeChild(tmp); resolve(null); return; }
+      const vb = svgEl.getAttribute("viewBox")||"";
+      const parts = vb.split(/\s+/);
+      // Always derive from viewBox — getAttribute("width") returns "100%" which parseInt() truncates to 100
+      const W = Math.round(parseFloat(parts[2]) || 1200);
+      const H = Math.round(parseFloat(parts[3]) || 400);
+      svgEl.setAttribute("width", W); svgEl.setAttribute("height", H);
+      const svgStr = new XMLSerializer().serializeToString(svgEl);
+      document.body.removeChild(tmp);
+      // base64 data URL is more reliable than blob URL for canvas cross-origin restrictions
+      const b64 = btoa(unescape(encodeURIComponent(svgStr)));
+      const dataUrl = "data:image/svg+xml;base64," + b64;
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas"); c.width=W; c.height=H;
+        const ctx = c.getContext("2d");
+        ctx.fillStyle="#FFFFFF"; ctx.fillRect(0,0,W,H);
+        ctx.drawImage(img,0,0,W,H);
+        resolve(c.toDataURL("image/png"));
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    } catch(_) { resolve(null); }
+  });
+}
+
+window.bpdExportPPTX = function() {
+  const tryBuild=()=>{ _bpdBuildPPTX().catch(e=>alert("PPT Error: "+e.message)); };
+  if(window.PptxGenJS){tryBuild();return;}
+  const CDNS=[
+    "/js/pptxgen.bundle.js",
+    "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js",
+    "https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js",
+  ];
+  let idx=0;
+  function tryNext(){
+    if(idx>=CDNS.length){alert("Cannot load PowerPoint library. Try Word export instead.");return;}
+    const s=document.createElement("script");
+    s.src=CDNS[idx++];
+    s.onload=()=>setTimeout(()=>{if(window.PptxGenJS)tryBuild();else tryNext();},300);
+    s.onerror=()=>tryNext();
+    document.head.appendChild(s);
+  }
+  tryNext();
+};
+
+async function _bpdBuildPPTX() {
+  const d=window._bpd.data, f=window._bpd.form;
+  if(!d){alert("No data. Generate first.");return;}
+  const pres=new window.PptxGenJS();
+  pres.layout="LAYOUT_16x9";
+  pres.author="Accenture SAP Practice";
+  pres.title=(f.projectName||"Workshop")+" - SAP BPD";
+
+  // ── Design tokens matching the UI ───────────────────────────────────────────
+  const P="5B2FD4",    // accent purple (#5B2FD4)
+        PD="460073",   // dark purple (header gradient start)
+        PA="A100FF",   // bright purple (header gradient end)
+        W="FFFFFF",
+        BK="1B1340",   // dark ink
+        MU="6E6494",   // muted
+        LV="F0EBFF",   // lavender light bg
+        GN="0FA968",   // green
+        RD="DC2626",   // red
+        AM="D97706",   // amber
+        now=new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});
+
+  // Shared: add purple gradient header bar + title
+  function hdr(sl, title, sub) {
+    sl.background = {color:W};
+    // gradient bar at top: two overlapping rects to fake gradient
+    sl.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:10,h:0.72,fill:{color:PD}});
+    sl.addShape(pres.shapes.RECTANGLE,{x:5,y:0,w:5,h:0.72,fill:{color:PA},transparency:50});
+    sl.addText(title,{x:0.35,y:0.06,w:9.3,h:0.38,fontSize:17,fontFace:"Calibri",color:W,bold:true,margin:0});
+    if(sub) sl.addText(sub,{x:0.35,y:0.44,w:9.3,h:0.25,fontSize:9,fontFace:"Calibri",color:"D0B0FF",margin:0});
+    // bottom accent line
+    sl.addShape(pres.shapes.RECTANGLE,{x:0,y:0.72,w:10,h:0.03,fill:{color:P}});
+  }
+
+  // Shared: build a purple-header table header row
+  const th = (txt,extra={}) => ({text:txt, options:{bold:true,color:W,fill:{color:P},fontSize:8,fontFace:"Calibri",valign:"middle",...extra}});
+  const td = (txt,opts={}) => ({text:String(txt||"").slice(0,120), options:{fontSize:8,fontFace:"Calibri",valign:"top",...opts}});
+
+  // ── Slide 1: Title ──────────────────────────────────────────────────────────
+  const s1=pres.addSlide();
+  s1.background={color:PD};
+  s1.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:10,h:5.625,fill:{color:PA},transparency:75});
+  s1.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:0.1,h:5.625,fill:{color:PA}});
+  s1.addText("ACCENTURE SAP PRACTICE",{x:0.5,y:0.55,w:7,h:0.3,fontSize:8.5,fontFace:"Calibri",color:"D0B0FF",bold:true,charSpacing:3,margin:0});
+  s1.addText(f.projectName||"SAP Workshop",{x:0.5,y:1.05,w:8.5,h:1.1,fontSize:34,fontFace:"Calibri",color:W,bold:true,margin:0});
+  s1.addText("Business Process Documentation\nSAP S/4HANA Cloud Public Edition — L2 / L3 / L4 / L5",{x:0.5,y:2.25,w:8.5,h:0.75,fontSize:13,fontFace:"Calibri",color:"E0C8FF",margin:0});
+  s1.addText([
+    {text:f.client||"",options:{fontSize:11,color:"D0B0FF",fontFace:"Calibri"}},
+    {text:"   ·   ",options:{fontSize:11,color:"6040A0",fontFace:"Calibri"}},
+    {text:f.module||"",options:{fontSize:11,color:"D0B0FF",fontFace:"Calibri"}},
+    {text:"   ·   ",options:{fontSize:11,color:"6040A0",fontFace:"Calibri"}},
+    {text:now,options:{fontSize:11,color:"9060C0",fontFace:"Calibri"}},
+  ],{x:0.5,y:3.2,w:8.5,h:0.4});
+  s1.addShape(pres.shapes.RECTANGLE,{x:0,y:5.2,w:10,h:0.425,fill:{color:"0D0520"}});
+  s1.addText("BPMN 2.0  ·  Clean Core Compliant  ·  SAP Fiori Apps  ·  SAP Activate",{x:0.5,y:5.25,w:9,h:0.3,fontSize:8,fontFace:"Calibri",color:"6040A0"});
+
+  // ── Slide 2: Process Requirement ────────────────────────────────────────────
+  if(f.description&&f.description.trim()){
+    const sl=pres.addSlide();
+    hdr(sl,"Process Requirement","Client requirement — source context grounding this documentation");
+    const descText=f.description.trim().slice(0,1200);
+    sl.addText(descText,{x:0.4,y:0.85,w:9.2,h:4.3,fontSize:10,fontFace:"Calibri",color:BK,valign:"top",paraSpaceAfter:4,wrap:true});
+    // sidebar tag
+    sl.addShape(pres.shapes.RECTANGLE,{x:0,y:0.75,w:0.08,h:4.5,fill:{color:P}});
+    // scope items selected
+    const _cp=(window._bpd?.catalogData?.processes||[]);
+    if(_cp.length>0){
+      const scopeText=_cp.map(p=>`${p.id} — ${p.name}`).join("   |   ");
+      sl.addText("Scope Items: "+scopeText.slice(0,200),{x:0.4,y:5.1,w:9.2,h:0.35,fontSize:8.5,fontFace:"Calibri",color:MU,italic:true});
+    }
+  }
+
+  // ── Slide 3: L2 Overview ────────────────────────────────────────────────────
+  if(d.l2){
+    const sl=pres.addSlide();
+    hdr(sl,"L2 — "+(d.l2.name||"End-to-End Process"),"Process overview · scope items · KPIs");
+    // Description — hard-capped so it never bleeds into sections below
+    const l2desc=(d.l2.description||"").slice(0,280);
+    sl.addText(l2desc,{x:0.4,y:0.85,w:9.2,h:0.75,fontSize:9.5,fontFace:"Calibri",color:BK,valign:"top",wrap:true});
+    // Scope items — rendered as a table row (cells, no shape+text overlap risk)
+    const sItems=(d.l2.scopeItems||[]).slice(0,6);
+    if(sItems.length){
+      sl.addText("SCOPE ITEMS",{x:0.4,y:1.67,w:9.2,h:0.22,fontSize:7.5,fontFace:"Calibri",color:MU,bold:true,charSpacing:1});
+      const siRow=sItems.map(si=>({text:si.slice(0,30),options:{bold:true,color:P,fill:{color:LV},fontSize:8.5,fontFace:"Calibri",border:[{pt:1,color:P},{pt:1,color:P},{pt:1,color:P},{pt:1,color:P}],margin:4}}));
+      // Pad to 6 cells
+      while(siRow.length<6) siRow.push({text:"",options:{fill:{color:W},border:[{pt:0,color:W}]}});
+      sl.addTable([siRow],{x:0.4,y:1.9,w:9.2,h:0.38,colW:[1.53,1.53,1.54,1.53,1.53,1.54],border:{pt:0,color:W}});
+    }
+    // KPIs — vertical list below scope items
+    const kpis=(d.l2.kpis||[]).slice(0,5);
+    if(kpis.length){
+      sl.addText("KEY PERFORMANCE INDICATORS",{x:0.4,y:2.38,w:9.2,h:0.22,fontSize:7.5,fontFace:"Calibri",color:MU,bold:true,charSpacing:1});
+      kpis.forEach((k,i)=>{
+        sl.addText("✓  "+k.slice(0,90),{x:0.4,y:2.62+i*0.38,w:9.2,h:0.36,fontSize:9.5,fontFace:"Calibri",color:BK,valign:"middle"});
+      });
+    }
+  }
+
+  // ── L3 Slides — info left, swimlane right ───────────────────────────────────
+  for(const area of (d.l3Areas||[])){
+    const sl=pres.addSlide();
+    hdr(sl,"L3 — "+area.name, area.id+" · "+area.scopeItem);
+    // Left panel (info)
+    sl.addShape(pres.shapes.RECTANGLE,{x:0,y:0.75,w:0.06,h:4.6,fill:{color:P}});
+    const l3desc=(area.description||"").slice(0,200);
+    sl.addText(l3desc,{x:0.35,y:0.82,w:4.3,h:0.72,fontSize:9,fontFace:"Calibri",color:BK,valign:"top",wrap:true});
+    // Role — single table cell (no shape+text layering)
+    if(area.primaryRole){
+      sl.addTable([[{text:"▶  "+area.primaryRole.slice(0,50),options:{bold:true,color:P,fill:{color:LV},fontSize:8.5,fontFace:"Calibri",margin:5}}]],{x:0.35,y:1.58,w:4.3,h:0.32,border:{pt:1,color:P}});
+    }
+    // Fiori Apps
+    if((area.fioriApps||[]).length){
+      sl.addText("FIORI APPS",{x:0.35,y:2.0,w:4.0,h:0.22,fontSize:7.5,fontFace:"Calibri",color:MU,bold:true,charSpacing:1});
+      area.fioriApps.slice(0,4).forEach((a,i)=>{
+        sl.addText("◈ "+a.slice(0,45),{x:0.35,y:2.22+i*0.3,w:4.2,h:0.28,fontSize:8.5,fontFace:"Calibri",color:BK});
+      });
+    }
+    // Inputs / Outputs
+    const ioY=(area.fioriApps||[]).length>0?3.45:2.1;
+    if((area.inputs||[]).length){
+      sl.addText("IN: "+(area.inputs||[]).slice(0,3).join("  ·  ").slice(0,70),{x:0.35,y:ioY,w:4.2,h:0.28,fontSize:8.5,fontFace:"Calibri",color:"076652"});
+    }
+    if((area.outputs||[]).length){
+      sl.addText("OUT: "+(area.outputs||[]).slice(0,3).join("  ·  ").slice(0,70),{x:0.35,y:ioY+0.3,w:4.2,h:0.28,fontSize:8.5,fontFace:"Calibri",color:"7C3AED"});
+    }
+    // Divider
+    sl.addShape(pres.shapes.RECTANGLE,{x:4.65,y:0.75,w:0.02,h:4.55,fill:{color:"E6E1F0"}});
+    // Right panel: swimlane PNG or placeholder
+    if(area.swimlane?.lanes?.length){
+      const png=await _bpdSvgToDataUrl(area.swimlane);
+      if(png){
+        sl.addImage({data:png,x:4.72,y:0.82,w:5.05,h:4.4});
+      } else {
+        sl.addText("Swimlane: "+area.name,{x:4.75,y:2.5,w:4.9,h:0.5,fontSize:11,fontFace:"Calibri",color:MU,align:"center"});
+      }
+    } else {
+      sl.addText("No swimlane generated for this area",{x:4.75,y:2.7,w:4.9,h:0.5,fontSize:10,fontFace:"Calibri",color:MU,align:"center",italic:true});
+    }
+  }
+
+  // ── L4 Activity Slides ──────────────────────────────────────────────────────
+  for(const act of (d.l4Activities||[])){
+    const sl=pres.addSlide();
+    hdr(sl,"L4 — "+act.name, act.id+" · "+act.role+" · "+act.fioriApp);
+    sl.addShape(pres.shapes.RECTANGLE,{x:0,y:0.75,w:0.06,h:4.6,fill:{color:"7C3AED"}});
+    const steps=(act.steps||[]);
+    const half=Math.ceil(steps.length/2);
+    const col1=steps.slice(0,half), col2=steps.slice(half);
+    col1.forEach((s,i)=>{
+      sl.addShape(pres.shapes.ROUNDED_RECTANGLE,{x:0.35,y:0.85+i*0.65,w:0.35,h:0.35,fill:{color:P},rounding:0.15});
+      sl.addText(String(i+1),{x:0.35,y:0.87+i*0.65,w:0.35,h:0.31,fontSize:10,fontFace:"Calibri",color:W,bold:true,align:"center",valign:"middle"});
+      sl.addText(s.slice(0,90),{x:0.77,y:0.85+i*0.65,w:4.2,h:0.55,fontSize:9,fontFace:"Calibri",color:BK,valign:"top",wrap:true});
+    });
+    col2.forEach((s,i)=>{
+      sl.addShape(pres.shapes.ROUNDED_RECTANGLE,{x:5.2,y:0.85+i*0.65,w:0.35,h:0.35,fill:{color:P},rounding:0.15});
+      sl.addText(String(half+i+1),{x:5.2,y:0.87+i*0.65,w:0.35,h:0.31,fontSize:10,fontFace:"Calibri",color:W,bold:true,align:"center",valign:"middle"});
+      sl.addText(s.slice(0,90),{x:5.62,y:0.85+i*0.65,w:4.0,h:0.55,fontSize:9,fontFace:"Calibri",color:BK,valign:"top",wrap:true});
+    });
+    // Key fields table if present
+    if((act.keyFields||[]).length){
+      const kfY=0.85+Math.max(col1.length,col2.length)*0.65;
+      if(kfY<4.6){
+        const kfRows=[[th("Field"),th("OData Property"),th("Mandatory")]];
+        act.keyFields.slice(0,4).forEach((kf,i)=>{const f2={color:i%2?"F8F6FF":W};kfRows.push([td(kf.label,{fill:f2,bold:true}),td(kf.odata,{fill:f2,color:MU}),td(kf.mandatory?"Yes":"No",{fill:f2,align:"center"})]);});
+        sl.addTable(kfRows,{x:0.35,y:kfY,w:9.3,colW:[3.2,4.5,1.6],border:{pt:0.5,color:"E6E1F0"},autoPage:false});
+      }
+    }
+  }
+
+  // ── L5 Business Configuration ───────────────────────────────────────────────
+  if((d.l5Config||[]).length){
+    const sl=pres.addSlide();
+    hdr(sl,"L5 — Business Configuration",(d.l5Config.length)+" configuration items");
+    const rows=[[th("ID"),th("Name"),th("Configuration Path"),th("Purpose"),th("Key Setting")]];
+    (d.l5Config||[]).forEach((c,i)=>{
+      const f2={color:i%2?"F8F6FF":W};
+      const ks=(c.keySettings||[]).map(s=>s.field+": "+s.value).join(" · ").slice(0,80);
+      rows.push([td(c.id,{bold:true,color:P,fill:f2}),td(c.name,{fill:f2}),td(c.path,{color:MU,fill:f2}),td(c.purpose,{fill:f2}),td(ks,{color:MU,fill:f2})]);
+    });
+    sl.addTable(rows,{x:0.3,y:0.85,w:9.4,colW:[0.55,1.7,2.6,2.7,2.35],border:{pt:0.5,color:"E6E1F0"},autoPage:true});
+  }
+
+  // ── E2E Process Swimlane ────────────────────────────────────────────────────
+  if(d.endToEndSwimlane?.lanes?.length){
+    const sl=pres.addSlide();
+    hdr(sl,"End-to-End Process Swimlane: "+(d.endToEndSwimlane.title||"E2E"),"BPMN 2.0 — roles, steps, Fiori apps, decision points");
+    const png=await _bpdSvgToDataUrl(d.endToEndSwimlane);
+    if(png) sl.addImage({data:png,x:0.15,y:0.82,w:9.7,h:4.5});
+    else sl.addText("Open in browser for swimlane visual",{x:0.5,y:2.8,w:9,fontSize:12,fontFace:"Calibri",color:MU,align:"center"});
+  }
+
+  // ── As-Is Legacy Process ────────────────────────────────────────────────────
+  if(d.asIsSwimlane?.lanes?.length){
+    const sl=pres.addSlide();
+    hdr(sl,"As-Is: Legacy Process","Before SAP S/4HANA Cloud PE — manual steps, system pain points");
+    sl.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:10,h:0.72,fill:{color:"7B1818"}});
+    sl.addText("As-Is: Legacy Process",{x:0.35,y:0.06,w:9.3,h:0.38,fontSize:17,fontFace:"Calibri",color:W,bold:true,margin:0});
+    sl.addText("Before SAP S/4HANA Cloud PE — manual steps, system pain points",{x:0.35,y:0.44,w:9.3,h:0.25,fontSize:9,fontFace:"Calibri",color:"FFAAAA",margin:0});
+    sl.addShape(pres.shapes.RECTANGLE,{x:0,y:0.72,w:10,h:0.03,fill:{color:"DC2626"}});
+    const png=await _bpdSvgToDataUrl(d.asIsSwimlane);
+    if(png) sl.addImage({data:png,x:0.15,y:0.82,w:9.7,h:4.5});
+  }
+
+  // ── Fit-to-Standard Assessment ──────────────────────────────────────────────
+  if((d.fts?.assessments||[]).length){
+    const sl=pres.addSlide();
+    hdr(sl,"Fit-to-Standard Assessment",(d.fts.assessments.length)+" items · FIT / PARTIAL_FIT / GAP");
+    const rows=[[th("ID"),th("Scope Item"),th("Assessment"),th("Resolution"),th("Effort"),th("Recommendation")]];
+    (d.fts.assessments||[]).forEach((a,i)=>{
+      const f2={color:i%2?"F8F6FF":W};
+      const ac=a.assessment==="FIT"?GN:a.assessment==="GAP"?RD:AM;
+      rows.push([
+        td(a.id,{bold:true,color:P,fill:f2}),
+        td(a.scopeItem||a.description||"",{fill:f2}),
+        td(a.assessment||"",{bold:true,color:ac,fill:f2}),
+        td(a.resolution||"",{fill:f2}),
+        td(a.effort||"",{bold:true,align:"center",fill:f2}),
+        td((a.recommendation||a.idealAction||"").slice(0,90),{color:MU,fill:f2}),
+      ]);
+    });
+    sl.addTable(rows,{x:0.3,y:0.85,w:9.4,colW:[0.55,1.6,1.0,1.6,0.5,4.15],border:{pt:0.5,color:"E6E1F0"},autoPage:true});
+  }
+
+  // ── Next Steps — Action Items ────────────────────────────────────────────────
+  const nx=d.next||{};
+  if((nx.actionItems||[]).length){
+    const sl=pres.addSlide();
+    hdr(sl,"Next Steps — Action Items",(nx.actionItems.length)+" actions · "+now);
+    const rows=[[th("ID"),th("Action"),th("Category"),th("Owner"),th("Phase"),th("Priority")]];
+    (nx.actionItems||[]).forEach((a,i)=>{
+      const f2={color:i%2?"F8F6FF":W};
+      const pc=a.priority==="HIGH"?RD:a.priority==="MEDIUM"?AM:GN;
+      rows.push([td(a.id,{bold:true,color:P,fill:f2}),td(a.action,{fill:f2}),td(a.category,{color:MU,fill:f2}),td(a.owner,{fill:f2}),td(a.phase,{fill:f2}),td(a.priority,{bold:true,color:pc,fill:f2,align:"center"})]);
+    });
+    sl.addTable(rows,{x:0.3,y:0.85,w:9.4,colW:[0.55,3.4,1.1,1.3,1.05,0.9],border:{pt:0.5,color:"E6E1F0"},autoPage:true});
+  }
+
+  // ── Risks & Mitigations ──────────────────────────────────────────────────────
+  if((nx.risks||[]).length){
+    const sl=pres.addSlide();
+    hdr(sl,"Risks & Mitigations",(nx.risks.length)+" risks identified");
+    const rows=[[th("ID"),th("Risk"),th("Probability"),th("Impact"),th("Mitigation"),th("Owner")]];
+    (nx.risks||[]).forEach((r,i)=>{
+      const f2={color:i%2?"F8F6FF":W};
+      rows.push([td(r.id,{bold:true,fill:f2}),td(r.description,{fill:f2}),td(r.probability,{bold:true,color:RD,fill:f2,align:"center"}),td(r.impact,{bold:true,color:AM,fill:f2,align:"center"}),td(r.mitigation,{fill:f2}),td(r.owner,{color:MU,fill:f2})]);
+    });
+    sl.addTable(rows,{x:0.3,y:0.85,w:9.4,colW:[0.5,2.5,0.9,0.75,3.8,0.95],border:{pt:0.5,color:"E6E1F0"},autoPage:true});
+  }
+
+  // ── Workshop Sign-Off ────────────────────────────────────────────────────────
+  if((nx.signOff||[]).length){
+    const sl=pres.addSlide();
+    hdr(sl,"Workshop Sign-Off","Stakeholder approval · "+f.projectName);
+    const rows=[[th("SAP Role"),th("Title"),th("Responsibility"),th("Signature",""),th("Date","")]];
+    (nx.signOff||[]).forEach((so,i)=>{
+      const f2={color:i%2?"F8F6FF":W};
+      rows.push([td(so.role,{bold:true,color:P,fill:f2}),td(so.title,{fill:f2}),td(so.responsibility,{fill:f2}),td("",{fill:f2}),td("",{fill:f2})]);
+    });
+    sl.addTable(rows,{x:0.3,y:0.85,w:9.4,colW:[2.1,1.6,3.4,1.4,0.9],border:{pt:0.5,color:"E6E1F0"},autoPage:true});
+  }
+
+  // ── Closing Slide ────────────────────────────────────────────────────────────
+  const sc=pres.addSlide();
+  sc.background={color:PD};
+  sc.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:10,h:5.625,fill:{color:PA},transparency:75});
+  sc.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:0.1,h:5.625,fill:{color:PA}});
+  sc.addText("Thank You",{x:0.5,y:1.5,w:9,h:1.1,fontSize:40,fontFace:"Calibri",color:W,bold:true,margin:0});
+  sc.addText((f.projectName||"")+" · "+(f.client||"")+" · "+f.module,{x:0.5,y:2.85,w:9,h:0.5,fontSize:14,fontFace:"Calibri",color:"D0B0FF"});
+  sc.addText("SAP S/4HANA Cloud Public Edition · Business Process Documentation · Clean Core · "+now,{x:0.5,y:3.55,w:9,h:0.4,fontSize:9.5,fontFace:"Calibri",color:"9060C0"});
+  sc.addShape(pres.shapes.RECTANGLE,{x:0,y:5.2,w:10,h:0.425,fill:{color:"0D0520"}});
+  sc.addText("Accenture SAP Practice · Confidential",{x:0.5,y:5.25,w:9,h:0.3,fontSize:8,fontFace:"Calibri",color:"6040A0",align:"center"});
+
+  pres.writeFile({fileName:(f.projectName||"Workshop").replace(/\s+/g,"-")+"_BPD.pptx"}).catch(e=>alert("Error saving PPTX: "+e.message));
 }

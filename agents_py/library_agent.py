@@ -1,4 +1,5 @@
 # agents_py/library_agent.py — Stage 2: load past approved decisions
+import asyncio
 import json
 import logging
 from .shared import ROOT
@@ -13,7 +14,8 @@ async def run(state: dict) -> dict:
     all_decisions = []
     try:
         if DECISIONS_PATH.exists():
-            all_decisions = json.loads(DECISIONS_PATH.read_text("utf-8"))
+            text = await asyncio.to_thread(DECISIONS_PATH.read_text, "utf-8")
+            all_decisions = json.loads(text)
     except Exception as e:
         log.warning("Could not read decisions.json: %s", e)
 

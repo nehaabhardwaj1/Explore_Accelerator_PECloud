@@ -19,8 +19,8 @@ async def run(state: dict) -> dict:
     item = state["item"]
     raw  = item.get("description") or ""
 
-    # Detect HTML and strip tags before line parsing
-    if "<html" in raw.lower() or "<!doctype" in raw.lower() or raw.strip().startswith("<"):
+    # Strip HTML whenever any tag appears anywhere in the description (not just at the start)
+    if re.search(r"<[a-zA-Z/!]", raw):
         raw = _strip_html(raw)
 
     lines = [l.strip() for l in raw.split("\n") if l.strip()]
@@ -35,17 +35,16 @@ async def run(state: dict) -> dict:
         if line in _STOP:               cur = None;        continue
         if cur:                         sec[cur].append(line)
 
-    overview_text = " ".join(sec["overview"])[:300]
+    overview_text = " ".join(sec["overview"])[:200]
 
     # Fallback: use full stripped plain text when section markers weren't found
     if not overview_text and raw:
-        # Take the first 400 chars of the stripped text as overview
-        overview_text = raw[:400]
+        overview_text = raw[:200]
 
     context = {
         "overview": overview_text,
-        "flow":     "\n".join(f"{i+1}. {s}" for i, s in enumerate(sec["flow"][:10])),
-        "benefits": "; ".join(sec["benefits"][:5]),
+        "flow":     "\n".join(f"{i+1}. {s}" for i, s in enumerate(sec["flow"][:6])),
+        "benefits": "; ".join(sec["benefits"][:3]),
     }
 
     log.info("%s — overview %dc, %d flow steps", item["id"], len(context["overview"]), len(sec["flow"]))

@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator
@@ -31,13 +32,25 @@ log = logging.getLogger("accelerator")
 
 from routes.deps import (
     CATALOG_PATH, CLAUDE_EXE, OUTPUT_DIR, PORT,
-    append_run_log, load_cache, load_catalog, load_decisions, load_projects,
-    save_decisions, save_projects, spawn_claude, sse,
+    load_cache, load_catalog, load_decisions,
+    save_decisions, spawn_claude, sse,
 )
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Explore Accelerator — SAP S/4HANA Cloud PE KDD Generator")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    log.info("Explore Accelerator starting on port %d", PORT)
+    log.info("Claude CLI: %s", CLAUDE_EXE)
+    if CATALOG_PATH.exists():
+        cat = load_catalog()
+        log.info("Catalog loaded: %d items", len(cat.get("items", [])))
+    else:
+        log.warning("scope-catalog.json not found — run Chrome extension to generate it")
+    yield
+
+
+app = FastAPI(title="Explore Accelerator — SAP S/4HANA Cloud PE KDD Generator", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
@@ -50,11 +63,15 @@ from routes.kdd import router as kdd_router
 from routes.catalog import router as catalog_router
 from a2a.router import router as a2a_router, build_card
 from bdcq_agent.routes import router as bdcq_router
+from f2s_agent.routes import router as f2s_router
+from bpd_agent.routes import router as bpd_router
 
 app.include_router(kdd_router)
 app.include_router(catalog_router)
 app.include_router(a2a_router, prefix="/a2a")
 app.include_router(bdcq_router)
+app.include_router(f2s_router)
+app.include_router(bpd_router)
 
 # ── Well-known agent card ─────────────────────────────────────────────────────
 
@@ -65,6 +82,11 @@ async def agent_card(request: Request):
 
 
 # ── Health endpoint ───────────────────────────────────────────────────────────
+
+@app.get("/bpd")
+async def bpd_page():
+    return FileResponse(ROOT / "public" / "bpd.html")
+
 
 @app.get("/health")
 async def health():
@@ -87,7 +109,10 @@ async def api_status():
     outdated   = is_catalog_outdated(version)
     cache        = load_cache()
     cache_ready  = bool(cache and cache.get("items"))
-    output_count = sum(1 for f in OUTPUT_DIR.iterdir() if f.is_file() and f.suffix in (".xlsx", ".pptx"))
+    try:
+        output_count = sum(1 for f in OUTPUT_DIR.iterdir() if f.is_file() and f.suffix in (".xlsx", ".pptx"))
+    except OSError:
+        output_count = 0
     return {
         "ok":              True,
         "catalogVersion":  version or "—",
@@ -248,13 +273,15 @@ async def sync_decisions():
 
 @app.delete("/api/decisions")
 async def clear_decisions(clientSlug: str = ""):
+    all_decisions = load_decisions()
     if clientSlug:
-        keep = [d for d in load_decisions()
+        keep = [d for d in all_decisions
                 if re.sub(r"[^\w]", "-", (d.get("client") or "").lower()).strip("-") != clientSlug]
     else:
         keep = []
+    deleted = len(all_decisions) - len(keep)
     save_decisions(keep)
-    return {"ok": True, "deleted": len(load_decisions()) - len(keep) if not clientSlug else None}
+    return {"ok": True, "deleted": deleted}
 
 
 @app.delete("/api/decisions/{decision_id}")
@@ -297,8 +324,12 @@ async def save_project(request: Request):
 
 @app.post("/api/projects/load")
 async def load_project(request: Request):
+    from routes.deps import slugify
     body = await request.json()
-    slug = body.get("slug", "")
+    raw_slug = body.get("slug", "")
+    slug = slugify(raw_slug) or ""
+    if not slug:
+        return {"ok": False, "error": "Invalid project slug"}
     fp   = OUTPUT_DIR / f"kdd-data-{slug}.json"
     if not fp.exists():
         return {"ok": False, "error": f"Project '{slug}' not found"}
@@ -321,10 +352,13 @@ async def delete_project(slug: str):
 
 @app.get("/api/output")
 async def list_output():
-    files = sorted(
-        (f for f in OUTPUT_DIR.iterdir() if f.is_file() and f.suffix in (".xlsx", ".pptx")),
-        key=lambda f: f.stat().st_mtime, reverse=True,
-    )
+    try:
+        files = sorted(
+            (f for f in OUTPUT_DIR.iterdir() if f.is_file() and f.suffix in (".xlsx", ".pptx")),
+            key=lambda f: f.stat().st_mtime, reverse=True,
+        )
+    except OSError:
+        files = []
     return {"ok": True, "folder": str(OUTPUT_DIR), "files": [
         {"name": f.name, "size": f.stat().st_size, "type": f.suffix[1:].upper(),
          "modified": datetime.utcfromtimestamp(f.stat().st_mtime).isoformat() + "Z"}
@@ -335,10 +369,13 @@ async def list_output():
 @app.delete("/api/output")
 async def delete_all_output():
     deleted = 0
-    for fp in OUTPUT_DIR.iterdir():
-        if fp.is_file() and fp.suffix in (".xlsx", ".pptx"):
-            fp.unlink()
-            deleted += 1
+    try:
+        for fp in OUTPUT_DIR.iterdir():
+            if fp.is_file() and fp.suffix in (".xlsx", ".pptx"):
+                fp.unlink()
+                deleted += 1
+    except OSError:
+        pass
     return {"ok": True, "deleted": deleted}
 
 
@@ -471,19 +508,6 @@ else:
         return JSONResponse({"status": "Explore Accelerator API running", "version": "2.0.0-python",
                              "endpoints": ["/api/catalog", "/api/kdd/generate", "/api/bdcq/status",
                                            "/.well-known/agent.json", "/a2a"]})
-
-
-# ── Startup ────────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup():
-    log.info("Explore Accelerator starting on port %d", PORT)
-    log.info("Claude CLI: %s", CLAUDE_EXE)
-    if CATALOG_PATH.exists():
-        cat = load_catalog()
-        log.info("Catalog loaded: %d items", len(cat.get("items", [])))
-    else:
-        log.warning("scope-catalog.json not found — run Chrome extension to generate it")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

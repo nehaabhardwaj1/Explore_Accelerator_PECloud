@@ -94,9 +94,13 @@ async def _spawn_claude(prompt: str, timeout: int = CLAUDE_TIMEOUT_S) -> str:
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(prompt.encode("utf-8")), timeout=timeout
         )
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise TimeoutError(f"Claude timed out after {timeout}s")
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()  # prevent zombie process accumulation
+        raise
 
     if proc.returncode != 0:
         msg = stderr.decode("utf-8", errors="replace")[:200]
@@ -170,9 +174,9 @@ def _fill_defaults(rows: list, item: dict, mod: str) -> list:
     return out
 
 
-# ── Call 1: Question Generation ───────────────────────────────────────────────
-async def _generate_questions(item: dict, context: dict, past_decisions: list,
-                              retry: int = 0) -> list:
+# ── Call 1+2 (merged): Question Generation + Enrichment ──────────────────────
+async def _generate_and_enrich(item: dict, context: dict, past_decisions: list,
+                                retry: int = 0) -> list:
     mod = LOB_MODULE.get(item.get("lob", ""), "Cross")
 
     desc_parts = []
@@ -189,7 +193,7 @@ async def _generate_questions(item: dict, context: dict, past_decisions: list,
         lines = "\n".join(f"• {d['question']} [{d.get('fitGap','?')}]" for d in past_decisions)
         past_block = f"\nPast decisions for {item['id']}:\n{lines}"
 
-    prompt = f"""Generate exactly 15 KDD questions for SAP S/4HANA Cloud Public Edition.
+    prompt = f"""Generate exactly 15 KDD entries for SAP S/4HANA Cloud Public Edition.
 
 Scope: {item['id']} — {item['name']} | LOB: {item.get('lob','')} | Module: {mod}
 
@@ -203,15 +207,21 @@ Cover: [2] Fiori Config  [2] Master Data  [2] Approval/Workflow  [1] Outputs/For
        [2] Integration  [1] Reporting  [1] Authorisation  [2] Data Migration
        [1] Org Structure  [1] Number Ranges
 
-Return ONLY a JSON array of exactly 15 objects with these 6 fields:
+Return ONLY a JSON array of exactly 15 objects:
 [{{
   "kddId": "{item['id']}-KDD-001",
   "designQuestion": "specific question naming Fiori app (max 150 chars)",
-  "fitGap": "Fit" | "Partial Fit" | "Gap",
-  "complexity": "Low" | "Medium" | "High",
+  "fitGap": "Fit"|"Partial Fit"|"Gap",
+  "complexity": "Low"|"Medium"|"High",
   "l1": "top-level area e.g. Finance",
-  "l2": "sub-area e.g. Accounts Payable"
+  "l2": "sub-area e.g. Accounts Payable",
+  "decisionOwner": "role e.g. Finance Lead / IT Security Lead / Plant Manager",
+  "sapActivatePhase": "Explore"|"Realize"|"Deploy",
+  "rationale": "1 sentence why this matters for Cloud PE (max 100 chars)",
+  "impactActions": "1 sentence consequence if not decided before go-live (max 100 chars)",
+  "notes": "exact Fiori app name or BTP service (max 80 chars)"
 }}]
+Cloud PE only. No ABAP/ECC/SAP GUI. If you cannot determine a field, write "To be confirmed" — never fabricate.
 JSON only. No markdown."""
 
     out  = await _spawn_claude(prompt)
@@ -219,63 +229,12 @@ JSON only. No markdown."""
 
     if not isinstance(rows, list) or len(rows) != 15:
         if retry == 0:
-            log.warning("%s call-1 wrong count — retrying", item["id"])
-            return await _generate_questions(item, context, past_decisions, 1)
-        raise ValueError(f"Call 1: expected 15 rows, got {len(rows) if isinstance(rows, list) else type(rows)}")
+            log.warning("%s call-1+2 wrong count — retrying", item["id"])
+            return await _generate_and_enrich(item, context, past_decisions, 1)
+        raise ValueError(f"Call 1+2: expected 15 rows, got {len(rows) if isinstance(rows, list) else type(rows)}")
 
-    log.info("%s — call-1 done (%d questions)", item["id"], len(rows))
+    log.info("%s — call-1+2 done (%d questions)", item["id"], len(rows))
     return rows
-
-
-# ── Call 2: Enrichment ────────────────────────────────────────────────────────
-async def _enrich_questions(item: dict, questions: list, retry: int = 0) -> list:
-    q_lines = "\n".join(
-        f"{i+1}. [{q['kddId']}] [{q.get('fitGap','')}] {q.get('designQuestion','')}"
-        for i, q in enumerate(questions)
-    )
-    prompt = f"""You are an SAP S/4HANA Cloud Public Edition consultant.
-
-Add detail fields to these {len(questions)} KDD questions for scope item {item['id']} — {item['name']}.
-
-Questions:
-{q_lines}
-
-Return ONLY a JSON array of exactly {len(questions)} objects:
-[{{
-  "kddId": "...",
-  "decisionOwner": "role e.g. Finance Lead / IT Security Lead / Plant Manager",
-  "sapActivatePhase": "Explore" | "Realize" | "Deploy",
-  "rationale": "1 sentence why this matters for Cloud PE (max 100 chars)",
-  "impactActions": "1 sentence consequence if not decided before go-live (max 100 chars)",
-  "notes": "exact Fiori app name or BTP service (max 80 chars)"
-}}]
-Cloud PE only. No ABAP/ECC/SAP GUI.
-IMPORTANT: If you cannot determine a field from the question text alone, write "To be confirmed" — never guess or fabricate Fiori app names. JSON only."""
-
-    out    = await _spawn_claude(prompt)
-    detail = _extract_json(out)
-
-    if not isinstance(detail, list) or len(detail) != len(questions):
-        if retry == 0:
-            log.warning("%s call-2 wrong count — retrying", item["id"])
-            return await _enrich_questions(item, questions, 1)
-        log.warning("%s call-2 failed after retry — using empty enrichment", item["id"])
-        return [{**q, "decisionOwner": "", "sapActivatePhase": "Explore",
-                 "rationale": "", "impactActions": "", "notes": ""} for q in questions]
-
-    by_id = {d["kddId"]: d for d in detail}
-    merged = []
-    for i, q in enumerate(questions):
-        d = by_id.get(q["kddId"], detail[i] if i < len(detail) else {})
-        merged.append({
-            **q,
-            "decisionOwner":    d.get("decisionOwner", ""),
-            "sapActivatePhase": d.get("sapActivatePhase", "Explore"),
-            "rationale":        d.get("rationale", ""),
-            "impactActions":    d.get("impactActions", ""),
-            "notes":            d.get("notes", ""),
-        })
-    return merged
 
 
 # ── Call 3: RICEF Classification ──────────────────────────────────────────────
@@ -318,6 +277,13 @@ IMPORTANT: If fitGap does not clearly indicate an extensibility need, set ricefT
             }} if r["kddId"] in by_id else r
             for r in rows
         ]
+    except asyncio.CancelledError:
+        # asyncio.wait_for raises CancelledError (not TimeoutError) when the outer timeout
+        # fires; _spawn_claude's except asyncio.TimeoutError block won't catch it, so we
+        # must propagate cancellation cleanly without accumulating zombie processes.
+        # The subprocess is already killed by _spawn_claude's finally path; just re-raise.
+        log.warning("%s RICEF cancelled (timeout)", item["id"])
+        raise
     except Exception as e:
         log.warning("%s RICEF skipped: %s", item["id"], e)
         return rows
@@ -336,22 +302,19 @@ async def run(state: dict) -> dict:
         if on_event:
             on_event({"type": "progress", "item": item["id"], "name": item["name"], "message": msg})
 
-    emit("[4a/5] Generating 15 questions…")
-    questions = await _generate_questions(item, context, past_decisions)
-    emit(f"[4b/5] Questions ready ({int(time.monotonic()-t0)}s) — adding rationale & detail…")
-
-    enriched = await _enrich_questions(item, questions)
-    emit(f"[4c/5] Detail added ({int(time.monotonic()-t0)}s) — classifying RICEF…")
+    emit("[4a/5] Generating 15 questions with full detail…")
+    enriched = await _generate_and_enrich(item, context, past_decisions)
+    emit(f"[4b/5] Questions ready ({int(time.monotonic()-t0)}s) — classifying RICEF…")
 
     full_rows  = _fill_defaults(enriched, item, mod)
     with_ricef = await _classify_ricef(item, full_rows)
 
     total_s = int(time.monotonic() - t0)
-    log.info("%s — done in %ds (3 calls)", item["id"], total_s)
+    log.info("%s — done in %ds (2 calls)", item["id"], total_s)
 
-    # Approximate token counts
-    input_tokens  = round((min(len(item.get("description", "")), 800) + 400) / 4)
-    output_tokens = round((6 * 30 + 5 * 25) * 15 / 4)
+    # Approximate token counts (merged call — 11 fields, 15 rows, ~600 token prompt)
+    input_tokens  = round((min(len(item.get("description", "")), 600) + 500) / 4)
+    output_tokens = round(11 * 20 * 15 / 4)
 
     versioned = [{**r, "promptVersion": PROMPT_VERSION} for r in with_ricef]
     return {

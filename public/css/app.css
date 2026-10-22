@@ -145,7 +145,7 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
   overflow-y: auto;
   background: var(--content-bg);
 }
-#app { max-width: 1100px; margin: 0 auto; padding: 32px 28px; }
+#app { max-width: 1100px; margin: 0 auto; padding: 16px 28px; }
 
 /* ── Page header ───────────────────────────────────────────────────────────── */
 .page-header { margin-bottom: 24px; }
@@ -158,8 +158,8 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
   border:        1px solid var(--border);
   border-radius: var(--radius);
   box-shadow:    var(--shadow);
-  padding:       20px 22px;
-  margin-bottom: 16px;
+  padding:       16px 18px;
+  margin-bottom: 10px;
 }
 .card-title {
   font-size:   13px;
@@ -209,16 +209,23 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
   font-weight:   600;
   transition:    background .15s, opacity .15s;
 }
-.btn-primary  { background: var(--accent); color: #fff; }
-.btn-primary:hover  { background: #6d28d9; }
-.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary  { background: linear-gradient(135deg,#460073 0%,#A100FF 100%); color: #fff; border: none; }
+.btn-primary:hover  { filter: brightness(1.12); }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; filter: none; }
 .btn-outline  { border: 1px solid var(--border); color: var(--text); background: #fff; }
 .btn-outline:hover { background: #f9fafb; }
 .btn-sm { padding: 5px 12px; font-size: 12.5px; }
 .btn-danger { background: var(--danger); color: #fff; }
+/* Primary generate/action button — used in all agents */
+.btn-generate {
+  justify-content: center;
+  font-size: 15px; font-weight: 700;
+  padding: 13px 48px; letter-spacing: 0.3px;
+  border-radius: 10px;
+}
 
 /* ── Forms ─────────────────────────────────────────────────────────────────── */
-.form-group   { margin-bottom: 16px; }
+.form-group   { margin-bottom: 10px; }
 .form-label   { display: block; font-size: 12.5px; font-weight: 600; color: #374151; margin-bottom: 5px; }
 .form-input, .form-select, .form-textarea {
   width: 100%; padding: 8px 12px;
@@ -466,10 +473,14 @@ tr:hover td { background: #fafafa; }
   color:       var(--text-muted);
   text-transform: uppercase;
   letter-spacing: .06em;
-  margin:      20px 0 10px;
+  margin:      10px 0 10px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
+
+/* ── Collapsible details (Cover Sheet) ───────────────────────────────────────── */
+details > summary { user-select: none; }
+details[open] > summary span:first-child { transform: rotate(90deg); display: inline-block; }
 
 /* ── Modal ───────────────────────────────────────────────────────────────────── */
 .modal-overlay {
@@ -696,3 +707,10 @@ tr.row-expand-content:hover td { background: transparent !important; }
   transition: border-color .15s;
 }
 .p-suggest-card:hover { border-color: #7c3aed; }
+
+/* ── Thin custom scrollbars throughout the app ───────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d8b4fe; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #A100FF; }
+* { scrollbar-width: thin; scrollbar-color: #d8b4fe transparent; }

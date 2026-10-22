@@ -19,11 +19,13 @@ router = APIRouter(prefix="/api/kdd")
 
 @router.post("/generate")
 async def kdd_generate(request: Request):
-    body       = await request.json()
-    scope_ids  = [s.strip().upper() for s in (body.get("scopeIds") or []) if s.strip()]
-    client     = (body.get("client") or "").strip()
-    project    = (body.get("project") or "").strip()
-    mode       = body.get("mode", "ai")
+    body            = await request.json()
+    scope_ids       = [s.strip().upper() for s in (body.get("scopeIds") or []) if s.strip()]
+    client          = (body.get("client") or "").strip()
+    project         = (body.get("project") or "").strip()
+    mode            = body.get("mode", "ai")
+    client_country  = (body.get("clientCountry") or "").strip()
+    client_region   = (body.get("clientRegion") or "").strip()
     start_time = time.monotonic()
 
     if not scope_ids:
@@ -53,37 +55,52 @@ async def kdd_generate(request: Request):
             events_q.put_nowait(ev)
 
         async def _run():
-            result = await orchestrator.run(items=items, cache_data=cache, on_event=on_event, concurrency=3, mode=mode)
+            try:
+                result = await orchestrator.run(items=items, cache_data=cache, on_event=on_event, concurrency=3, mode=mode)
+            except Exception as exc:
+                events_q.put_nowait({"type": "error", "message": f"Pipeline failed: {exc}"})
+                result = {"rows": [], "overviews": [], "src_counts": {"claude": 0, "cache": 0, "error": len(items)}}
             events_q.put_nowait({"type": "_pipeline_done_", "result": result})
 
-        asyncio.create_task(_run())
+        _task = asyncio.create_task(_run())
 
         all_rows = []
         overviews = []
         src_counts = {}
 
-        while True:
-            try:
-                ev = await asyncio.wait_for(events_q.get(), timeout=0.5)
-            except asyncio.TimeoutError:
-                yield "data: \n\n"
-                continue
-            if ev.get("type") == "_pipeline_done_":
-                result     = ev["result"]
-                all_rows   = result["rows"]
-                overviews  = result["overviews"]
-                src_counts = result["src_counts"]
-                break
-            yield sse(ev)
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(events_q.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    yield "data: \n\n"
+                    continue
+                if ev.get("type") == "_pipeline_done_":
+                    result     = ev["result"]
+                    all_rows   = result["rows"]
+                    overviews  = result["overviews"]
+                    src_counts = result["src_counts"]
+                    break
+                yield sse(ev)
 
-        if not all_rows:
-            yield sse({"type": "fatal", "message": "No KDDs generated — check scope IDs exist in the catalog."})
-            return
+            if not all_rows:
+                yield sse({"type": "fatal", "message": "No KDDs generated — check scope IDs exist in the catalog."})
+                return
 
-        yield sse({"type": "progress", "message": "Building Excel workbook…"})
+            yield sse({"type": "progress", "message": "Building Excel workbook…"})
+        finally:
+            if not _task.done():
+                _task.cancel()
+                try:
+                    await _task
+                except (asyncio.CancelledError, Exception):
+                    pass
         meta = {
             "client": client, "project": project,
             "catalogVersion": str(cat.get("version", "")),
+            "catalogCountry": cat.get("country", "Global") or "Global",
+            "clientCountry":  client_country or "Global",
+            "clientRegion":   client_region or "",
             "generatedAt":    datetime.utcnow().isoformat() + "Z",
             "scopeCount":     len(overviews),
             "overviews":      overviews,
@@ -202,15 +219,18 @@ async def kdd_sessions():
     for f in files:
         sid = f.stem.replace("kdd-data-", "", 1)
         try:
-            meta = json.loads(f.read_text("utf-8")).get("meta", {})
+            data       = json.loads(f.read_text("utf-8"))
+            meta       = data.get("meta", {})
+            total_kdds = len(data.get("rows", []))
         except Exception:
-            meta = {}
+            meta       = {}
+            total_kdds = 0
         sessions.append({
             "sessionId":   sid,
             "client":      meta.get("client", ""),
             "project":     meta.get("project", ""),
             "generatedAt": meta.get("generatedAt", ""),
-            "totalKDDs":   len(json.loads(f.read_text("utf-8")).get("rows", [])) if f.exists() else 0,
+            "totalKDDs":   total_kdds,
         })
     return {"sessions": sessions}
 
@@ -265,9 +285,12 @@ async def kdd_retry_row(kdd_id: str, request: Request):
         raise HTTPException(404, f"Scope item {scope_id} not found in catalog")
     from agents_py import context_agent, generation_agent, validation_agent
     state = {"item": item, "context": None, "past_decisions": get_past_decisions(scope_id), "on_event": None}
-    state = await context_agent.run(state)
-    state = await generation_agent.run(state)
-    state = await validation_agent.run(state)
+    try:
+        state = await context_agent.run(state)
+        state = await generation_agent.run(state)
+        state = await validation_agent.run(state)
+    except (TimeoutError, RuntimeError) as exc:
+        raise HTTPException(500, f"Retry generation failed: {exc}")
     new_rows = state.get("rows", [])
     matching = next((r for r in new_rows if r.get("kddId") == kdd_id), new_rows[0] if new_rows else None)
     if not matching:

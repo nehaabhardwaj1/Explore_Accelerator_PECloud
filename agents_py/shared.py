@@ -4,12 +4,12 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-CLAUDE_MODEL      = os.environ.get("CLAUDE_MODEL", "claude-opus-4-5")
+CLAUDE_MODEL      = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE_TIMEOUT_S  = int(os.environ.get("CLAUDE_TIMEOUT_S", "240"))  # env-driven; complex processes can take 100-150s
 
 # Increment when any generation prompt changes so KDD rows carry the version
 # that produced them — enables quality audits across prompt iterations.
-PROMPT_VERSION = "1.1"  # 1.0 → 1.1: added refusal rules to all 3 prompts
+PROMPT_VERSION = "1.2"  # 1.1 → 1.2: merged calls 1+2 into single generation pass (token reduction)
 
 KDD_REQUIRED_FIELDS = [
     "kddId", "scopeItemId", "scopeItemName", "designQuestion",

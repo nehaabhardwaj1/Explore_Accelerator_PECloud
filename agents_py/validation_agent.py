@@ -48,25 +48,44 @@ def _scan_forbidden(rows: list) -> list:
     return violations
 
 
+# Module-level compiled regex for _auto_fix — built once, reused on every call.
+# Single alternation so each text position is matched at most once, preventing
+# a replacement value from being re-processed by a later rule.
+_AUTO_FIX_RE = re.compile(
+    "|".join(f"(?P<t{i}>{re.escape(t)})" for i, t in enumerate(AUTO_REPLACEMENTS)),
+    re.IGNORECASE,
+)
+_AUTO_FIX_KEYS = list(AUTO_REPLACEMENTS.keys())
+
+
+def _auto_fix_replace(m: re.Match) -> str:
+    for i, key in enumerate(_AUTO_FIX_KEYS):
+        if m.group(f"t{i}") is not None:
+            return AUTO_REPLACEMENTS[key]
+    return m.group()
+
+
 def _auto_fix(rows: list) -> list:
+
     fixed = []
     for row in rows:
         r = dict(row)
         for field in SCANNABLE_FIELDS:
             val = r.get(field) or ""
-            for term, replacement in AUTO_REPLACEMENTS.items():
-                pattern = re.compile(re.escape(term), re.IGNORECASE)
-                val = pattern.sub(replacement, val)
-            r[field] = val
+            if val:
+                r[field] = _AUTO_FIX_RE.sub(_auto_fix_replace, val)
         fixed.append(r)
     return fixed
 
 
 def _schema_errors(rows: list) -> list:
     errors = []
-    if not isinstance(rows, list) or len(rows) != 15:
-        errors.append(f"Expected 15 rows, got {len(rows) if isinstance(rows, list) else type(rows)}")
+    if not isinstance(rows, list):
+        errors.append(f"Expected list of rows, got {type(rows)}")
         return errors
+    if len(rows) != 15:
+        errors.append(f"Expected 15 rows, got {len(rows)}")
+        # Continue checking per-row fields even on count mismatch — more actionable detail
     for i, row in enumerate(rows):
         label   = row.get("kddId", f"row {i+1}")
         missing = [f for f in KDD_REQUIRED_FIELDS if not row.get(f)]

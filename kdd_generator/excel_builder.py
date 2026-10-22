@@ -10,24 +10,25 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 from .helpers import (
-    dedup, detect_on_prem, get_rag_status, get_decision_owner,
+    dedup, get_rag_status, get_decision_owner,
     get_sap_activate_phase, get_integration_flags, get_config_effort,
+    get_country_availability,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
 
 HEADERS = [
-    "Industry", "Module", "L1", "L2", "L3", "L4",
+    "Industry", "Country Availability", "Module", "L1", "L2", "L3", "L4",
     "KDD ID", "Scope Item ID", "Scope Item Name", "Design Question",
     "Decision Made", "Rationale", "Impact / Actions",
     "Fit/Gap", "Complexity", "RAG", "SAP Activate Phase", "Config Effort",
     "Integration Flags", "Decision Owner", "SAP Consultant", "Status",
     "Notes", "Source", "Data Source",
     "Workshop Date", "Decided By", "Sign-off Status", "Action Items", "BPD Reference",
-    "RICEF Title", "RICEF Type", "Extensibility Path", "BTP Required", "Effort Estimate", "Complexity",
+    "RICEF Title", "RICEF Type", "Extensibility Path", "BTP Required", "Effort Estimate", "RICEF Complexity",
 ]
 COL_WIDTHS = [
-    18, 10, 20, 25, 25, 25,
+    18, 20, 10, 20, 25, 25, 25,
     15, 15, 35, 65,
     30, 30, 30,
     13, 13, 10, 16, 18,
@@ -73,6 +74,7 @@ def _make_kdd_sheet(wb: Workbook, rows: list) -> None:
     for r in rows:
         row_vals = [
             "Cross Industry",
+            get_country_availability(r),
             r.get("module", ""),
             r.get("l1", ""),
             r.get("l2", ""),
@@ -107,7 +109,7 @@ def _make_kdd_sheet(wb: Workbook, rows: list) -> None:
             r.get("extensibilityType", "None"),
             r.get("btpRequired", "No"),
             r.get("effortEstimate", "None"),
-            r.get("complexity", "Low"),
+            r.get("ricefComplexity") or r.get("complexity", "Low"),
         ]
         ws.append(row_vals)
         # Wrap text for long columns
@@ -124,7 +126,7 @@ def _make_overview_sheet(wb: Workbook, overviews: list) -> None:
         return
     ws = wb.create_sheet("Scope Overview")
     headers = [
-        "Scope Item ID", "Scope Item Name", "Module", "Line of Business",
+        "Scope Item ID", "Scope Item Name", "Country Availability", "Module", "Line of Business",
         "SAP Version", "Overview", "Key Process Flow", "Business Benefits", "Source",
     ]
     ws.append(headers)
@@ -134,13 +136,15 @@ def _make_overview_sheet(wb: Workbook, overviews: list) -> None:
         cell.alignment = Alignment(wrap_text=True, vertical="center")
     for o in overviews:
         ws.append([
-            o.get("id"), o.get("name"), o.get("module"), o.get("lob"),
+            o.get("id"), o.get("name"),
+            get_country_availability({"scopeItemName": o.get("name")}),
+            o.get("module"), o.get("lob"),
             o.get("version"), o.get("overview"),
             o.get("keyProcessFlow"), o.get("businessBenefits"), o.get("source"),
         ])
         for cell in ws[ws.max_row]:
             cell.alignment = Alignment(wrap_text=True, vertical="top")
-    for i, w in enumerate([15, 40, 10, 28, 12, 100, 100, 80, 15], start=1):
+    for i, w in enumerate([15, 40, 20, 10, 28, 12, 100, 100, 80, 15], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
 
@@ -151,14 +155,16 @@ def _make_instructions_sheet(wb: Workbook, meta: dict) -> None:
     rows = [
         ("KDD Master Log", ""),
         ("", ""),
-        ("Client",          meta.get("client", "")),
-        ("Project",         meta.get("project", "")),
-        ("Generated",       today),
-        ("Catalog version", meta.get("catalogVersion", "")),
+        ("Client",           meta.get("client", "")),
+        ("Project",          meta.get("project", "")),
+        ("Generated",        today),
+        ("Catalog version",  meta.get("catalogVersion", "")),
+        ("Catalog country",  meta.get("catalogCountry", "Global")),
         ("", ""),
-        ("Column",          "Guidance"),
-        ("Source",          "SAP for Me = real extracted content. Claude Knowledge = AI-generated."),
-        ("Data Source",     "Indicates quality level. SAP for Me rows are higher quality."),
+        ("Column",               "Guidance"),
+        ("Country Availability", "Global = available worldwide. Country name = country-specific localisation (e.g. Germany VAT, Sweden Intrastat)."),
+        ("Source",               "SAP for Me = real extracted content. Claude Knowledge = AI-generated."),
+        ("Data Source",          "Indicates quality level. SAP for Me rows are higher quality."),
         ("Fit/Gap",         "Fit / Partial Fit / Gap"),
         ("Complexity",      "Low / Medium / High"),
         ("Status",          "Open / In Progress / Closed"),
@@ -187,11 +193,13 @@ def _make_cover_sheet(wb: Workbook, rows: list, meta: dict) -> None:
         ("", ""),
         ("    SAP S/4HANA Cloud Public Edition", ""),
         ("", ""),
-        ("    Client:",          meta.get("client", "[Client Name]")),
-        ("    Project:",         meta.get("project", "[Project Name]")),
-        ("    Generated:",       today),
-        ("    Catalog Version:", meta.get("catalogVersion", "")),
-        ("    Scope Items:",     meta.get("scopeCount", "")),
+        ("    Client:",           meta.get("client", "[Client Name]")),
+        ("    Project:",          meta.get("project", "[Project Name]")),
+        ("    Generated:",        today),
+        ("    Catalog Version:",  meta.get("catalogVersion", "")),
+        ("    Catalog Country:",  meta.get("catalogCountry", "Global")),
+        ("    Client Country:",   meta.get("clientCountry", "Global")),
+        ("    Scope Items:",      meta.get("scopeCount", "")),
         ("    Total KDD Items:", len(rows)),
         ("", ""),
         ("    DISCLAIMER", ""),

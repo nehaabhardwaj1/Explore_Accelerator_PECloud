@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from .deps import CATALOG_PATH, load_catalog, load_cache, sse
 from kdd_generator.helpers import expected_release, is_catalog_outdated
+from bdcq_agent.routes import reset_catalog_cache as _reset_bdcq_catalog_cache
 
 router = APIRouter(prefix="/api/catalog")
 
@@ -57,9 +58,14 @@ async def get_catalog_item(item_id: str):
 
 
 @router.get("/lobs")
-async def get_lobs():
+async def get_lobs(country: str = "", region: str = ""):
     cat   = load_catalog()
     items = cat.get("items", [])
+    if country:
+        items = [i for i in items
+                 if any(country in arr for arr in (i.get("countries") or {}).values())]
+    elif region:
+        items = [i for i in items if region in (i.get("countries") or {})]
     counts = Counter(i.get("lob") or "Unknown" for i in items)
     return sorted(
         [{"name": name, "count": cnt} for name, cnt in counts.items()],
@@ -95,11 +101,59 @@ async def catalog_info():
     }
 
 
+@router.get("/country-map")
+async def country_map():
+    """Region → sorted country list, built from per-item countries fields."""
+    cat   = load_catalog()
+    items = cat.get("items", [])
+    region_set: dict = {}
+    for item in items:
+        for region, country_list in (item.get("countries") or {}).items():
+            if region not in region_set:
+                region_set[region] = set()
+            region_set[region].update(country_list)
+    order  = ["Americas", "Europe", "Middle East and Africa", "Asia Pacific"]
+    result = {r: sorted(region_set[r]) for r in order if r in region_set}
+    for r in region_set:
+        if r not in result:
+            result[r] = sorted(region_set[r])
+    return result
+
+
+@router.get("/country-stats")
+async def country_stats(country: str = "", region: str = ""):
+    """Count of scope items available for a given country or region."""
+    cat   = load_catalog()
+    items = cat.get("items", [])
+    total = len(items)
+    if not country and not region:
+        return {"total": total, "available": total}
+    count = 0
+    for item in items:
+        c = item.get("countries") or {}
+        if country:
+            if any(country in arr for arr in c.values()):
+                count += 1
+        elif region:
+            if region in c:
+                count += 1
+    return {"total": total, "available": count, "country": country, "region": region}
+
+
+_CATALOG_MAX_BYTES = 50 * 1024 * 1024  # 50 MB — catalog is typically 1–5 MB
+
 @router.post("/save")
 async def save_catalog(request: Request):
-    body = await request.json()
-    CATALOG_PATH.write_text(json.dumps(body, indent=2, ensure_ascii=False), "utf-8")
-    items = body if isinstance(body, list) else body.get("items", [])
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _CATALOG_MAX_BYTES:
+        raise HTTPException(413, "Catalog payload too large (max 50 MB)")
+    body = await request.body()
+    if len(body) > _CATALOG_MAX_BYTES:
+        raise HTTPException(413, "Catalog payload too large (max 50 MB)")
+    parsed = json.loads(body)
+    CATALOG_PATH.write_text(json.dumps(parsed, indent=2, ensure_ascii=False), "utf-8")
+    _reset_bdcq_catalog_cache()
+    items = parsed if isinstance(parsed, list) else parsed.get("items", [])
     return {"ok": True, "count": len(items)}
 
 
@@ -159,6 +213,7 @@ async def clear_catalog():
         backup_path = CATALOG_PATH.parent / backup_name
         shutil.copy2(str(CATALOG_PATH), str(backup_path))
         CATALOG_PATH.unlink()
+        _reset_bdcq_catalog_cache()
 
         return {"ok": True, "backup": backup_name}
     except Exception as e:
@@ -179,6 +234,7 @@ async def upload_catalog(request: Request):
             shutil.copy2(str(CATALOG_PATH), str(backup_path))
 
         CATALOG_PATH.write_text(json.dumps(body, indent=2, ensure_ascii=False), "utf-8")
+        _reset_bdcq_catalog_cache()
 
         processes = body.get("processes", [])
         version   = str(body.get("version", ""))

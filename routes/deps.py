@@ -11,19 +11,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-CLAUDE_MODEL   = os.environ.get("CLAUDE_MODEL", "claude-opus-4-5")  # matches agents_py/shared.py default
+CLAUDE_MODEL   = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT_S", "240"))
 PORT           = int(os.environ.get("PORT", "3000"))
 
 CATALOG_PATH   = ROOT / "scope-catalog.json"
 CACHE_PATH     = ROOT / "kdd-cache.json"
 DECISIONS_PATH = ROOT / "decisions.json"
-PROJECTS_PATH  = ROOT / "projects.json"
 OUTPUT_DIR     = ROOT / "output"
 
 OUTPUT_DIR.mkdir(exist_ok=True)
-
-from agents_py.shared import KDD_REQUIRED_FIELDS  # single source of truth
 
 
 # ── Claude CLI ────────────────────────────────────────────────────────────────
@@ -87,10 +84,22 @@ async def spawn_claude(prompt: str, timeout: int = CLAUDE_TIMEOUT) -> str:
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()  # prevent zombie process accumulation
         raise TimeoutError(f"Claude timed out after {timeout}s")
+    except asyncio.CancelledError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()  # prevent zombie on request cancellation
+        raise
     if proc.returncode != 0:
-        raise RuntimeError(f"Claude exited {proc.returncode}")
+        stderr_text = _.decode("utf-8", errors="replace")[:400] if _ else ""
+        raise RuntimeError(f"Claude exited {proc.returncode}: {stderr_text.strip()}")
     return stdout.decode("utf-8", errors="replace")
 
 
@@ -125,19 +134,6 @@ def load_decisions() -> list:
 
 def save_decisions(decisions: list):
     DECISIONS_PATH.write_text(json.dumps(decisions, indent=2, ensure_ascii=False), "utf-8")
-
-
-def load_projects() -> list:
-    if not PROJECTS_PATH.exists():
-        return []
-    try:
-        return json.loads(PROJECTS_PATH.read_text("utf-8"))
-    except Exception:
-        return []
-
-
-def save_projects(projects: list):
-    PROJECTS_PATH.write_text(json.dumps(projects, indent=2, ensure_ascii=False), "utf-8")
 
 
 def get_past_decisions(scope_id: str) -> list:

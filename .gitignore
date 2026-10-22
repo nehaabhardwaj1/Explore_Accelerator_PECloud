@@ -30,6 +30,13 @@ scope-catalog.backup-*.json
 # BDCQ grounding uploads (per-project data)
 bdcq/grounding/
 
+# F2S and KDD knowledge base files (generated/downloaded, not source-controlled)
+f2s/
+kdd/
+
+# Chrome extension source (distributed as zip; source folder excluded)
+SAPDeckAgent-ChromeExtension/
+
 # OS
 .DS_Store
 Thumbs.db

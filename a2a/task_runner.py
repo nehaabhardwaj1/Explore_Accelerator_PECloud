@@ -60,8 +60,10 @@ async def _run_kdd_generate(params: dict, text: str, on_progress) -> list:
     if not catalog_path.exists():
         raise FileNotFoundError("scope-catalog.json not found")
 
-    raw     = json.loads(catalog_path.read_text("utf-8"))
-    catalog = raw if isinstance(raw, list) else raw.get("items", [])
+    raw         = json.loads(catalog_path.read_text("utf-8"))
+    catalog     = raw if isinstance(raw, list) else raw.get("items", [])
+    cat_country = (raw.get("country", "") or "Global") if isinstance(raw, dict) else "Global"
+    cat_version = str(raw.get("version", "")) if isinstance(raw, dict) else ""
     cat_map = {(i.get("id") or "").upper(): i for i in catalog}
 
     items = []
@@ -90,7 +92,8 @@ async def _run_kdd_generate(params: dict, text: str, on_progress) -> list:
 
     meta = {
         "client": client, "project": project,
-        "catalogVersion": "", "scopeCount": len(items),
+        "catalogVersion": cat_version, "catalogCountry": cat_country,
+        "scopeCount": len(items),
         "overviews": result["overviews"],
     }
     out_path = build_excel(rows, meta)

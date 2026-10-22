@@ -8,10 +8,10 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
-
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from agents_py.shared import AUTO_REPLACEMENTS as _BDCQ_REPLACEMENTS
 
 ROOT   = Path(__file__).resolve().parent.parent
 log    = logging.getLogger(__name__)
@@ -69,13 +69,35 @@ _ISO_DISPLAY = {
     "SA": "Saudi Arabia", "NL": "Netherlands", "PL": "Poland", "IT": "Italy",
     "ES": "Spain", "AT": "Austria", "SE": "Sweden", "MX": "Mexico",
     "CA": "Canada", "ZA": "South Africa", "AR": "Argentina",
+    "CH": "Switzerland", "NO": "Norway", "DK": "Denmark", "FI": "Finland",
+    "BE": "Belgium", "IE": "Ireland", "PT": "Portugal", "MY": "Malaysia",
+    "ID": "Indonesia", "PH": "Philippines", "TW": "Taiwan", "NZ": "New Zealand",
+    "IL": "Israel", "QA": "Qatar", "OM": "Oman", "KW": "Kuwait",
+    "EG": "Egypt", "HK": "Hong Kong",
+}
+
+# Country name → ISO-2 mapping used for AllCountries row injection.
+# Module-level so both bdcq_preview and bdcq_generate share a single source of truth.
+# 2-char ISO shortcuts (e.g. "in"→"IN") are intentionally excluded — the existing
+# part.upper()[:2] fallback already covers them and short tokens risk false matches.
+_COUNTRY_NORM: dict[str, str] = {
+    "india": "IN", "germany": "DE", "usa": "US", "uk": "GB", "brazil": "BR",
+    "france": "FR", "australia": "AU", "singapore": "SG", "japan": "JP",
+    "china": "CN", "south korea": "KR", "vietnam": "VN", "netherlands": "NL",
+    "poland": "PL", "italy": "IT", "spain": "ES", "austria": "AT", "sweden": "SE",
+    "mexico": "MX", "canada": "CA", "south africa": "ZA", "argentina": "AR",
+    "uae": "AE", "saudi arabia": "SA", "denmark": "DK", "finland": "FI",
+    "norway": "NO", "ireland": "IE", "belgium": "BE", "portugal": "PT",
+    "switzerland": "CH", "israel": "IL", "egypt": "EG", "kuwait": "KW",
+    "qatar": "QA", "oman": "OM", "malaysia": "MY", "indonesia": "ID",
+    "philippines": "PH", "taiwan": "TW", "hong kong": "HK", "new zealand": "NZ",
+    "united arab emirates": "AE", "united kingdom": "GB", "united states": "US",
 }
 
 
 # ── Claude subprocess (same pattern as generation_agent.py) ───────────────────
 
 def _resolve_claude() -> str:
-    import os
     if sys.platform != "win32":
         return "claude"
     if (p := os.environ.get("CLAUDE_PATH")) and Path(p).exists():
@@ -99,7 +121,6 @@ CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-5")
 
 
 def _make_env() -> dict:
-    import os
     home = str(Path.home())
     appdata = os.environ.get("APPDATA") or str(Path(home) / "AppData" / "Roaming")
     sep  = ";" if sys.platform == "win32" else ":"
@@ -129,11 +150,193 @@ async def _spawn_claude(prompt: str, timeout: int = 120) -> str:
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()  # prevent zombie process accumulation
         raise TimeoutError(f"Claude timed out after {timeout}s")
+    except asyncio.CancelledError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()  # prevent zombie on request cancellation
+        raise
     if proc.returncode != 0:
         raise RuntimeError(f"Claude exited {proc.returncode}")
     return stdout.decode("utf-8", errors="replace")
+
+
+# ── Scope catalog helpers ─────────────────────────────────────────────────────
+
+_CATALOG_CACHE: dict | None = None
+_CATALOG_LOADED: bool = False  # True once we have successfully read the file
+
+def _load_catalog() -> dict:
+    global _CATALOG_CACHE, _CATALOG_LOADED
+    # Return cached value only if we have already successfully loaded the file.
+    # A missing file caches as None so we retry on the next request (file may be
+    # created after server start); a successful load caches permanently.
+    if _CATALOG_LOADED and _CATALOG_CACHE is not None:
+        return _CATALOG_CACHE
+    path = ROOT / "scope-catalog.json"
+    if not path.exists():
+        return {}  # not cached — retry next request
+    try:
+        raw = json.loads(path.read_text("utf-8"))
+        items = raw if isinstance(raw, list) else raw.get("items") or raw.get("processes") or []
+        # Normalise all IDs to uppercase so extraction (which uppercases tokens) always matches.
+        _CATALOG_CACHE  = {i["id"].upper(): i for i in items if i.get("id")}
+        _CATALOG_LOADED = True
+        return _CATALOG_CACHE
+    except Exception:
+        return {}  # parse error — retry next request, don't permanently cache failure
+
+
+def reset_catalog_cache():
+    """Called by routes/catalog.py after catalog is saved/uploaded/cleared."""
+    global _CATALOG_CACHE, _CATALOG_LOADED
+    _CATALOG_CACHE  = None
+    _CATALOG_LOADED = False
+
+
+# SAP LOB → BDCQ domain name mapping
+_LOB_TO_BDCQ_DOMAIN = {
+    "Manufacturing":          "Manufacturing",
+    "Supply Chain":           "Supply Chain",
+    "Asset Management":       "Asset Management",
+    "Finance & Controlling":  "Finance",
+    "Sales & Distribution":   "Sales",
+    "Sourcing & Procurement": "Sourcing & Procurement",
+    "Human Resources":        "Human Resources",
+    "Customer Service":       "Service",
+    "R&D & Engineering":      "R&D Engineering",
+    "Professional Services":  "Professional Services",
+}
+
+
+# ── POST /api/bdcq/dda-extract ────────────────────────────────────────────────
+
+_DDA_MAX_BYTES = 20 * 1024 * 1024  # 20 MB — prevents memory exhaustion on large uploads
+
+@router.post("/dda-extract")
+async def dda_extract(file: UploadFile = File(...)):
+    """
+    Extract SAP scope IDs from a DDA Excel (.xlsx/.xlsm/.xlsb) or PDF file.
+    Validates every token found against scope-catalog.json.
+    Returns the matched IDs with name and LOB from the catalog.
+    Note: legacy .xls format is not supported — convert to .xlsx first.
+    """
+    content = await file.read()
+    if len(content) > _DDA_MAX_BYTES:
+        raise HTTPException(413, f"File too large — maximum {_DDA_MAX_BYTES // 1_048_576} MB allowed")
+    fname   = (file.filename or "").lower()
+    catalog = _load_catalog()
+    valid_ids: set[str] = set(catalog.keys())
+
+    if not valid_ids:
+        raise HTTPException(503, "scope-catalog.json not found — cannot validate IDs")
+
+    def _extract_tokens(text: str) -> set[str]:
+        """Split text on all non-alphanumeric chars and keep tokens that are catalog IDs."""
+        found = set()
+        for tok in re.split(r"[^A-Za-z0-9]+", text):
+            upper = tok.strip().upper()
+            if upper in valid_ids:
+                found.add(upper)
+        return found
+
+    found: set[str] = set()
+
+    if fname.endswith(".xls") and not fname.endswith((".xlsx", ".xlsm", ".xlsb")):
+        raise HTTPException(400, "Legacy .xls format is not supported. Please convert to .xlsx and re-upload.")
+
+    if fname.endswith((".xlsx", ".xlsm", ".xlsb")):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    for cell in row:
+                        if cell is not None:
+                            found |= _extract_tokens(str(cell))
+            wb.close()
+        except Exception as exc:
+            raise HTTPException(400, f"Could not read Excel file: {exc}")
+
+    elif fname.endswith(".pdf"):
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text() or ""
+                    found |= _extract_tokens(text)
+                    # Also scan table cells if any
+                    for table in (page.extract_tables() or []):
+                        for row in table:
+                            for cell in (row or []):
+                                if cell:
+                                    found |= _extract_tokens(str(cell))
+        except ImportError:
+            raise HTTPException(503, "pdfplumber not installed — run pip install pdfplumber")
+        except Exception as exc:
+            raise HTTPException(400, f"Could not read PDF file: {exc}")
+
+    else:
+        raise HTTPException(400, "Unsupported file type. Upload an Excel (.xlsx) or PDF file.")
+
+    matched_ids = sorted(found)
+    items = [
+        {"id": sid, "name": catalog[sid].get("name", ""), "lob": catalog[sid].get("lob", "")}
+        for sid in matched_ids
+    ]
+    return JSONResponse({
+        "ok":    True,
+        "ids":   matched_ids,
+        "items": items,
+        "count": len(matched_ids),
+        "source": file.filename or "",
+    })
+
+
+# ── GET /api/bdcq/scope-lookup ────────────────────────────────────────────────
+
+@router.get("/scope-lookup")
+async def scope_lookup(ids: str = ""):
+    """
+    Map comma-separated scope IDs to BDCQ domains for auto-selection.
+    Returns matched IDs, their LOBs, and the corresponding BDCQ domain names.
+    """
+    if not ids.strip():
+        return JSONResponse({"domains": [], "matchedIds": [], "matchedLobs": [], "notFound": []})
+
+    catalog = _load_catalog()
+    requested = [t.strip().upper() for t in re.split(r"[,;\s]+", ids) if t.strip()]
+
+    matched_ids: list[str] = []
+    matched_lobs: set[str] = set()
+    domains:      set[str] = set()
+    not_found:    list[str] = []
+
+    for sid in requested:
+        if sid in catalog:
+            matched_ids.append(sid)
+            lob = catalog[sid].get("lob", "")
+            if lob:
+                matched_lobs.add(lob)
+                bdcq = _LOB_TO_BDCQ_DOMAIN.get(lob)
+                if bdcq:
+                    domains.add(bdcq)
+        else:
+            not_found.append(sid)
+
+    return JSONResponse({
+        "domains":     sorted(domains),
+        "matchedIds":  matched_ids,
+        "matchedLobs": sorted(matched_lobs),
+        "notFound":    not_found,
+    })
 
 
 # ── GET /api/bdcq/status ──────────────────────────────────────────────────────
@@ -192,9 +395,14 @@ async def bdcq_status():
 
 # ── POST /api/bdcq/upload (JSON body from Chrome extension) ──────────────────
 
+_BDCQ_UPLOAD_MAX_BYTES = 20 * 1024 * 1024  # 20 MB — BDCQ JSON is typically < 2 MB
+
 @router.post("/upload")
 async def bdcq_upload(request: Request):
-    body = await request.json()
+    raw = await request.body()
+    if len(raw) > _BDCQ_UPLOAD_MAX_BYTES:
+        raise HTTPException(413, "BDCQ payload too large (max 20 MB)")
+    body = json.loads(raw)
     BDCQ_PATH.parent.mkdir(exist_ok=True)
     BDCQ_PATH.write_text(json.dumps(body, indent=2, ensure_ascii=False), "utf-8")
     domains = body.get("domains", [])
@@ -319,12 +527,6 @@ async def bdcq_preview(request: Request):
     if country_set:
         ac_rows = _read_all_countries()
         if ac_rows:
-            _COUNTRY_NORM = {
-                "india":"IN","germany":"DE","usa":"US","uk":"GB","brazil":"BR",
-                "france":"FR","australia":"AU","singapore":"SG","japan":"JP",
-                "china":"CN","south korea":"KR","vietnam":"VN","netherlands":"NL",
-                "uae":"AE","saudi arabia":"SA",
-            }
             seen_q = set()
             for row in ac_rows:
                 cr      = (row.get("Country / Region") or "").strip()
@@ -380,7 +582,9 @@ async def bdcq_preview(request: Request):
                 if selected_columns else all_headers
     output_cols = base_cols + data_cols
 
-    question_col = next((c for c in data_cols if "question" in c.lower()), data_cols[0] if data_cols else "Question")
+    # Use the first column whose name contains "question"; fall back to the literal "Question"
+    # key (never data_cols[0], which could be any non-question column the user selected).
+    question_col = next((c for c in data_cols if "question" in c.lower()), "Question")
 
     return {"ok": True, "rows": all_rows, "columns": output_cols, "questionCol": question_col, "rowCount": len(all_rows)}
 
@@ -421,9 +625,9 @@ async def bdcq_enrich(request: Request):
     question_lines = []
     for i, r in enumerate(rows):
         question = str(r.get(question_col) or r.get("Question") or "").strip()[:300]
-        topic_def= get_col(r, "topic definition", "definition", "description")[:400]
-        std_val  = get_col(r, "solution", "sample value", "standard value", "standard values")[:600]
-        watch_out= get_col(r, "watch out", "constraint", "watch-out")[:500]
+        topic_def= get_col(r, "topic definition", "definition", "description")[:200]
+        std_val  = get_col(r, "solution", "sample value", "standard value", "standard values")[:300]
+        watch_out= get_col(r, "watch out", "constraint", "watch-out")[:200]
         sscui    = get_col(r, "sscui reference", "sscui", "configuration activity")[:150]
         sap_id   = get_col(r, "sap id", "sapid", "id")[:20]
         topic    = get_col(r, "topic")[:100]
@@ -509,7 +713,17 @@ async def bdcq_enrich(request: Request):
         scored.sort(key=lambda x: -x[0])
         top = scored[:10]
         if top:
-            lines = [f"  [{s}] " + " | ".join(f"{k}: {str(v)[:300]}" for k, v in r.items() if v)
+            # Sanitise grounding content to prevent prompt injection from crafted Excel cells.
+            _INJECT_RE = re.compile(
+                r"ignore\b[\w\s]{0,30}\binstructions|new\s+(system\s+)?prompt|you\s+are\s+now"
+                r"|disregard\b[\w\s]{0,20}\b|system\s*:|<\s*script",
+                re.IGNORECASE,
+            )
+            def _safe_val(v) -> str:
+                s = str(v)[:300]
+                return _INJECT_RE.sub("[REDACTED]", s)
+
+            lines = [f"  [{s}] " + " | ".join(f"{k}: {_safe_val(v)}" for k, v in r.items() if v)
                      for _, s, r in top]
             grounding_block = (
                 "\n\nREFERENCE GROUNDING DATA (from client's uploaded reference Excel):\n"
@@ -556,6 +770,18 @@ JSON only. No markdown."""
         parsed = json.loads(out[s:e+1])
         if not isinstance(parsed, list) or len(parsed) != len(rows):
             raise ValueError(f"Expected {len(rows)} enrichments, got {len(parsed) if isinstance(parsed, list) else type(parsed)}")
+
+        # Auto-fix any forbidden on-prem terms that slipped through the prompt constraint
+        def _fix_enrichment(e: dict) -> dict:
+            fixed = {}
+            for field, text in e.items():
+                s = str(text)
+                for bad, good in _BDCQ_REPLACEMENTS.items():
+                    s = re.sub(re.escape(bad), good, s, flags=re.IGNORECASE)
+                fixed[field] = s
+            return fixed
+        parsed = [_fix_enrichment(e) for e in parsed]
+
     except Exception as exc:
         log.warning("BDCQ enrich Claude call failed: %s", exc)
         return {"ok": False, "error": str(exc), "enrichments": [{"standardValue": "", "watchOut": ""} for _ in raw_rows]}
@@ -924,12 +1150,6 @@ async def bdcq_generate(request: Request):
     if country_set:
         ac_rows = _read_all_countries()
         if ac_rows:
-            _COUNTRY_NORM = {
-                "india":"IN","germany":"DE","usa":"US","uk":"GB","brazil":"BR",
-                "france":"FR","australia":"AU","singapore":"SG","japan":"JP",
-                "china":"CN","south korea":"KR","vietnam":"VN","netherlands":"NL",
-                "uae":"AE","saudi arabia":"SA",
-            }
             seen_q: set = set()
             for row in ac_rows:
                 cr       = (row.get("Country / Region") or "").strip()

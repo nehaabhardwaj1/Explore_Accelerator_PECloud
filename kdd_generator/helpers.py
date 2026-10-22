@@ -1,12 +1,68 @@
 # kdd_generator/helpers.py — RAG status, decision owner, phase, integration flags, effort, dedup
 from datetime import date
-from agents_py.shared import ONPREM_TERMS  # single source of truth
+# Country keywords in scope item names → display label
+_COUNTRY_NAME_MAP = [
+    ("germany",       "Germany"),
+    ("german",        "Germany"),
+    ("sweden",        "Sweden"),
+    ("swedish",       "Sweden"),
+    ("south africa",  "South Africa"),
+    ("belgium",       "Belgium"),
+    ("belgian",       "Belgium"),
+    ("czech republic","Czech Republic"),
+    ("czech",         "Czech Republic"),
+    ("france",        "France"),
+    ("french",        "France"),
+    ("spain",         "Spain"),
+    ("spanish",       "Spain"),
+    ("italy",         "Italy"),
+    ("italian",       "Italy"),
+    ("netherlands",   "Netherlands"),
+    ("dutch",         "Netherlands"),
+    ("poland",        "Poland"),
+    ("polish",        "Poland"),
+    ("austria",       "Austria"),
+    ("switzerland",   "Switzerland"),
+    ("swiss",         "Switzerland"),
+    ("japan",         "Japan"),
+    ("japanese",      "Japan"),
+    ("china",         "China"),
+    ("india",         "India"),
+    ("brazil",        "Brazil"),
+    ("mexico",        "Mexico"),
+    ("canada",        "Canada"),
+    ("australia",     "Australia"),
+    ("norway",        "Norway"),
+    ("norwegian",     "Norway"),
+    ("korea",         "South Korea"),
+    ("united states", "United States"),
+    ("united kingdom","United Kingdom"),
+]
 
 
-def detect_on_prem(row: dict) -> list:
-    text = " ".join(str(row.get(f) or "") for f in
-                    ["designQuestion", "rationale", "impactActions", "notes"]).lower()
-    return [t for t in ONPREM_TERMS if t.lower() in text]
+def current_sap_release() -> tuple[str, str]:
+    """Return (code, label) for the current SAP release based on today's date.
+
+    SAP releases every 6 months: February (XX02) and August (XX08).
+    Returns e.g. ("2608", "Aug 2026") or ("2702", "Feb 2027").
+    """
+    today = date.today()
+    y, m = today.year, today.month
+    if m >= 8:
+        return (f"{y % 100:02d}08", f"Aug {y}")
+    elif m >= 2:
+        return (f"{y % 100:02d}02", f"Feb {y}")
+    else:
+        # January — previous August release is still current
+        return (f"{(y - 1) % 100:02d}08", f"Aug {y - 1}")
+
+
+def get_country_availability(row: dict) -> str:
+    name = (row.get("scopeItemName") or row.get("name") or "").lower()
+    for keyword, country in _COUNTRY_NAME_MAP:
+        if keyword in name:
+            return country
+    return "Global"
 
 
 def get_rag_status(row: dict) -> str:
@@ -77,21 +133,29 @@ def get_config_effort(row: dict) -> str:
 
 
 def dedup(rows: list) -> list:
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
     seen = set()
     out  = []
+    dropped = 0
     for r in rows:
         k = (r.get("designQuestion") or "").lower()[:60].strip()
         if not k or k in seen:
+            dropped += 1
             continue
         seen.add(k)
         out.append(r)
+    if dropped:
+        _log.warning("dedup: dropped %d duplicate/empty row(s) out of %d", dropped, len(rows))
     return out
 
 
 def expected_release() -> str:
     today = date.today()
-    yy    = today.year % 100
-    return f"{yy}08" if today.month >= 8 else f"{yy}02"
+    yy, m = today.year % 100, today.month
+    if m >= 8: return f"{yy}08"
+    if m >= 2: return f"{yy}02"
+    return f"{(today.year - 1) % 100:02d}08"  # January still on previous August release
 
 
 def is_catalog_outdated(catalog_version: str) -> bool:

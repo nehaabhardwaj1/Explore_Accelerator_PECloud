@@ -181,11 +181,8 @@ async def _tool_generate_kdd(args: dict) -> dict:
         return {"error": f"Scope IDs not found in catalog: {', '.join(not_found)}"}
 
     # Import orchestrator and run pipeline
-    import sys
-    sys.path.insert(0, str(ROOT))
     from agents_py import orchestrator
     from kdd_generator.excel_builder import build_excel
-    from pathlib import Path
 
     events = []
     def on_event(e):
@@ -198,9 +195,14 @@ async def _tool_generate_kdd(args: dict) -> dict:
     if not rows:
         return {"error": "No KDD rows generated", "events": events[-5:]}
 
+    raw_cat = json.loads((ROOT / "scope-catalog.json").read_text("utf-8")) if (ROOT / "scope-catalog.json").exists() else {}
+    if not isinstance(raw_cat, dict):
+        raw_cat = {}
     meta = {
         "client": client, "project": project,
-        "catalogVersion": "", "scopeCount": len(items),
+        "catalogVersion": str(raw_cat.get("version", "")),
+        "catalogCountry": raw_cat.get("country", "Global") or "Global",
+        "scopeCount": len(items),
         "overviews": result["overviews"],
     }
     out_path = build_excel(rows, meta)
@@ -236,7 +238,7 @@ def _reply(id_, result=None, error=None):
 
 async def _read_line() -> str:
     """Read one line from stdin without blocking the event loop."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, sys.stdin.readline)
 
 

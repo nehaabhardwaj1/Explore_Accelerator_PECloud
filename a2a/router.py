@@ -1,9 +1,8 @@
 # a2a/router.py — A2A protocol v0.2.x — spec-compliant
 # Agent Card  GET  /.well-known/agent.json  (served via server.py)
+#             GET  /a2a/                    (convenience alias — same card)
 # JSON-RPC    POST /a2a  and  POST /a2a/    (both handled, no redirect)
-# SSE stream  GET  /a2a/tasks/{id}/subscribe
-# Handoff     GET  /a2a/tasks/{id}/handoff?ack=true   (internal, non-A2A)
-# Trigger     POST /a2a/trigger                        (internal, non-A2A)
+# All task operations go through the JSON-RPC endpoint only (no REST aliases).
 import asyncio
 import json
 import os
@@ -47,11 +46,14 @@ def _audit(event: str, task_id: str, run_id: str, **kw):
 
 _INJECT_RE = re.compile(
     r"ignore\b[\w\s]{0,30}\binstructions"   # covers "ignore all/previous/prior/all previous instructions"
+    r"|forget\b[\w\s]{0,20}\binstructions"
     r"|new (system )?prompt"
     r"|you are now"
+    r"|act as (?:a )?(?:different|new) (?:ai|assistant|bot|system|gpt)"
     r"|disregard\b[\w\s]{0,20}\b"
-    r"|<\s*script"
-    r"|system\s*:",
+    r"|<\s*(?:script|img|iframe|meta|object|embed)"
+    r"|system\s*:"
+    r"|base64[,;]",
     re.IGNORECASE,
 )
 
@@ -141,30 +143,37 @@ def build_card(base_url: str) -> dict:
     }
 
 
-# Fallback static card for imports that don't have a request context
-AGENT_CARD = build_card(_BASE_URL)
-
-
 # ── Error registry ─────────────────────────────────────────────────────────────
 # -32001..-32003 are standard A2A error codes (kept as-is)
 # -32004/-32005 are reserved by the spec for UnsupportedOperation / ContentTypeNotSupported
 # Custom errors use -32050+ (unreserved range)
 
 _A2A_ERRORS = {
-    "TASK_NOT_FOUND":          {"code": -32001, "message": "Task not found"},
-    "TASK_CANT_CANCEL":        {"code": -32002, "message": "Task cannot be cancelled in current state"},
-    "PUSH_NOT_SUPPORTED":      {"code": -32003, "message": "Push notifications not supported"},
-    "PAYLOAD_REJECTED":        {"code": -32050, "message": "Payload rejected: failed injection screening"},
-    "TASK_NOT_COMPLETE":       {"code": -32051, "message": "Task not completed — handoff unavailable"},
-    "UNSUPPORTED_OPERATION":   {"code": -32004, "message": "Unsupported operation"},
+    "TASK_NOT_FOUND":             {"code": -32001, "message": "Task not found"},
+    "TASK_CANT_CANCEL":           {"code": -32002, "message": "Task cannot be cancelled in current state"},
+    "PUSH_NOT_SUPPORTED":         {"code": -32003, "message": "Push notifications not supported"},
+    "UNSUPPORTED_OPERATION":      {"code": -32004, "message": "Unsupported operation"},
     "CONTENT_TYPE_NOT_SUPPORTED": {"code": -32005, "message": "Content type not supported"},
+    "PAYLOAD_REJECTED":           {"code": -32050, "message": "Payload rejected: failed injection screening"},
 }
 
 
 # ── In-memory task store ───────────────────────────────────────────────────────
 
-_tasks:       dict[str, dict]          = {}
-_subscribers: dict[str, asyncio.Queue] = {}
+_tasks:        dict[str, dict]          = {}
+_subscribers:  dict[str, asyncio.Queue] = {}
+_task_handles: dict[str, asyncio.Task]  = {}  # for tasks/cancel and SSE cleanup
+_TASK_MAX      = 500   # evict oldest completed/failed tasks beyond this limit
+
+
+def _evict_tasks():
+    """Keep _tasks from growing unboundedly. Evict oldest terminal tasks first."""
+    if len(_tasks) <= _TASK_MAX:
+        return
+    terminal = [tid for tid, t in _tasks.items()
+                if t.get("status", {}).get("state") in ("completed", "failed", "canceled")]
+    for tid in terminal[:len(_tasks) - _TASK_MAX]:
+        _tasks.pop(tid, None)
 
 
 # ── Context envelope ───────────────────────────────────────────────────────────
@@ -200,6 +209,7 @@ def _new_task(message: dict, context_id: str | None = None) -> dict:
         },
     }
     _tasks[task_id] = task
+    _evict_tasks()
     return task
 
 
@@ -240,10 +250,6 @@ def _err(id_, error_key_or_obj):
 
 # ── Background task runner ─────────────────────────────────────────────────────
 
-class _InputRequired(Exception):
-    """Raised by the task runner when required parameters are absent."""
-
-
 async def _run_task(task: dict):
     from .task_runner import execute, InputRequired as TRInputRequired
     task_id = task["id"]
@@ -278,17 +284,26 @@ async def _run_task(task: dict):
 
 # ── SSE helper ────────────────────────────────────────────────────────────────
 
+_SSE_MAX_DURATION_S = 600  # 10 minutes — safety cap so streams can't hang forever
+
 async def _sse_stream(task: dict) -> AsyncGenerator[str, None]:
     task_id = task["id"]
     q: asyncio.Queue = asyncio.Queue()
     _subscribers[task_id] = q
-    asyncio.create_task(_run_task(task))
+    _task_handle = asyncio.create_task(_run_task(task))
+    _task_handles[task_id] = _task_handle
     # First event: initial submitted state
     yield f"data: {json.dumps({'id': task_id, 'status': task['status'], 'final': False})}\n\n"
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _SSE_MAX_DURATION_S
     try:
         while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                yield f"data: {json.dumps({'type': 'heartbeat', 'message': 'session timeout'})}\n\n"
+                break
             try:
-                event = await asyncio.wait_for(q.get(), timeout=30)
+                event = await asyncio.wait_for(q.get(), timeout=min(30, remaining))
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("final"):
                     break
@@ -296,6 +311,9 @@ async def _sse_stream(task: dict) -> AsyncGenerator[str, None]:
                 yield "data: {\"type\":\"heartbeat\"}\n\n"
     finally:
         _subscribers.pop(task_id, None)
+        _task_handles.pop(task_id, None)
+        if not _task_handle.done():
+            _task_handle.cancel()
 
 
 # ── Route handlers ─────────────────────────────────────────────────────────────
@@ -304,96 +322,6 @@ async def _sse_stream(task: dict) -> AsyncGenerator[str, None]:
 async def get_agent_card(request: Request):
     base = str(request.base_url).rstrip("/")
     return JSONResponse(build_card(base))
-
-
-@router.get("/tasks/{task_id}")
-async def get_task(task_id: str):
-    task = _tasks.get(task_id)
-    if not task:
-        return JSONResponse(_err(None, "TASK_NOT_FOUND"), status_code=404)
-    return JSONResponse(_ok(task_id, task))
-
-
-@router.get("/tasks/{task_id}/handoff")
-async def get_handoff(task_id: str, ack: bool = False):
-    """Internal non-A2A endpoint: package a completed task for downstream agent consumption."""
-    task = _tasks.get(task_id)
-    if not task:
-        return JSONResponse({"error": "Task not found"}, status_code=404)
-    if task["status"]["state"] != "completed":
-        return JSONResponse(_err(None, "TASK_NOT_COMPLETE"), status_code=409)
-
-    payload = {
-        "schema_version": "kdd_handoff_v1",
-        "context":        _envelope(task),
-        "task_id":        task_id,
-        "artifacts":      task.get("artifacts", []),
-        "status":         task["status"],
-        "metadata":       task.get("metadata", {}),
-    }
-    if ack:
-        task["metadata"]["acknowledged"]   = True
-        task["metadata"]["acknowledgedAt"] = _ts()
-        _audit("task.acknowledged", task_id, task.get("runId", task_id))
-
-    return JSONResponse(payload)
-
-
-@router.get("/tasks/{task_id}/subscribe")
-async def subscribe_task(task_id: str):
-    task = _tasks.get(task_id)
-    if not task:
-        return JSONResponse({"error": "Task not found"}, status_code=404)
-
-    q: asyncio.Queue = asyncio.Queue()
-    _subscribers[task_id] = q
-
-    async def event_gen() -> AsyncGenerator[str, None]:
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(q.get(), timeout=30)
-                    yield f"data: {json.dumps(event)}\n\n"
-                    if event.get("final"):
-                        break
-                except asyncio.TimeoutError:
-                    yield "data: {\"type\":\"heartbeat\"}\n\n"
-        finally:
-            _subscribers.pop(task_id, None)
-
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
-
-
-@router.post("/trigger")
-async def receive_trigger(request: Request):
-    """Internal non-A2A endpoint: accept an event from another agent and start a task."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-
-    run_id  = body.get("run_id") or str(uuid.uuid4())
-    payload = body.get("payload", {})
-    message = {
-        "kind":  "message",
-        "role":  "user",           # inbound messages are always "user" (finding #8)
-        "parts": [{"type": "text", "text": json.dumps(payload)}],
-        "metadata": {
-            "run_id":       run_id,
-            "source_agent": body.get("source_agent", "external"),
-            "event":        body.get("event", ""),
-        },
-    }
-    # Screen trigger payloads the same as JSON-RPC payloads (finding #11)
-    err = _screen(message)
-    if err:
-        _audit("payload.rejected", "N/A", run_id, reason=err)
-        return JSONResponse({"error": err, "code": -32050}, status_code=400)
-
-    task = _new_task(message)
-    asyncio.create_task(_run_task(task))
-    _audit("trigger.received", task["id"], run_id, eventType=body.get("event", ""))
-    return JSONResponse({"ok": True, "taskId": task["id"], "runId": run_id})
 
 
 # ── JSON-RPC entry point (handles both /a2a and /a2a/) ────────────────────────
@@ -427,7 +355,7 @@ async def _handle_rpc(request: Request) -> JSONResponse | StreamingResponse:
             return JSONResponse(_err(id_, "PAYLOAD_REJECTED"))
 
         task = _new_task(message, context_id)
-        asyncio.create_task(_run_task(task))
+        _task_handles[task["id"]] = asyncio.create_task(_run_task(task))
         _audit("task.submitted", task["id"], task["runId"], method=method)
         if id_ is None:
             return JSONResponse(None, status_code=204)
@@ -474,6 +402,8 @@ async def _handle_rpc(request: Request) -> JSONResponse | StreamingResponse:
                 return JSONResponse(None, status_code=204)
             return JSONResponse(_err(id_, "TASK_CANT_CANCEL"))
         _set_state(task, "canceled")
+        if handle := _task_handles.pop(task_id, None):
+            handle.cancel()
         _push(task_id, {"type": "status", "status": task["status"], "final": True})
         _audit("task.canceled", task_id, task.get("runId", task_id))
         if id_ is None:

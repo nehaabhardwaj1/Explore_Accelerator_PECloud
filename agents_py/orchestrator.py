@@ -14,7 +14,12 @@ _STOP_SECTIONS = {"Solution Capabilities", "Industry Relevance", "Diagrams", "Ac
 
 
 def _build_overview(item: dict, version: str) -> dict:
-    lines = [l.strip() for l in (item.get("description") or "").split("\n") if l.strip()]
+    from .context_agent import _strip_html
+    import re as _re
+    raw = item.get("description") or ""
+    if _re.search(r"<[a-zA-Z/!]", raw):
+        raw = _strip_html(raw)
+    lines = [l.strip() for l in raw.split("\n") if l.strip()]
     sec   = {"overview": [], "flow": [], "benefits": []}
     cur   = None
     for line in lines:
@@ -23,13 +28,16 @@ def _build_overview(item: dict, version: str) -> dict:
         if line == "Business Benefits":  cur = "benefits";  continue
         if line in _STOP_SECTIONS:       cur = None;        continue
         if cur and len(line) > 3:        sec[cur].append(line)
+    overview_text = " ".join(sec["overview"])
+    if not overview_text and raw:
+        overview_text = raw[:400]
     return {
         "id":               item["id"],
         "name":             item["name"],
         "module":           LOB_MODULE.get(item.get("lob", ""), "Cross"),
         "lob":              item.get("lob", ""),
         "version":          version,
-        "overview":         " ".join(sec["overview"]),
+        "overview":         overview_text,
         "keyProcessFlow":   "\n".join(f"{i+1}. {s}" for i, s in enumerate(sec["flow"])),
         "businessBenefits": "\n".join(f"{i+1}. {s}" for i, s in enumerate(sec["benefits"])),
         "source":           "SAP for Me",
@@ -65,11 +73,11 @@ def _overlay_decisions(rows: list, past_decisions: list) -> list:
 
 
 async def run(items: list, cache_data=None, on_event=None, concurrency: int = 3, mode: str = "ai") -> dict:
-    all_rows  = []
-    overviews = []
     src_counts = {"claude": 0, "cache": 0, "error": 0}
+    # Pre-allocated by input index so parallel tasks produce deterministic output order.
+    _item_results: list[tuple[list, dict | None] | None] = [None] * len(items)
 
-    async def process_item(item: dict):
+    async def process_item(idx: int, item: dict):
         import time
         t0 = time.monotonic()
         id_ = item["id"]
@@ -111,7 +119,7 @@ async def run(items: list, cache_data=None, on_event=None, concurrency: int = 3,
                     state = await library_agent.run(state)
                     if state.get("past_decisions"):
                         state["rows"] = _overlay_decisions(state["rows"], state["past_decisions"])
-                    all_rows.extend(state["rows"])
+                    _item_results[idx] = (state["rows"], None)
                     src_counts["cache"] += 1
                     emit({"type": "item_done", "item": id_, "name": item["name"],
                           "count": len(state["rows"]), "source": "cache",
@@ -119,6 +127,7 @@ async def run(items: list, cache_data=None, on_event=None, concurrency: int = 3,
                           "inputTokens": 0, "outputTokens": 0,
                           "pastDecisionsUsed": len(state.get("past_decisions", []))})
                 else:
+                    _item_results[idx] = ([], None)
                     src_counts["error"] += 1
                     emit({"type": "error", "item": id_,
                           "message": f"{id_} not in cache — switch to AI Generate mode"})
@@ -156,8 +165,7 @@ async def run(items: list, cache_data=None, on_event=None, concurrency: int = 3,
 
             ricef_count = sum(1 for r in state["rows"] if r.get("ricefType") and r["ricefType"] != "None")
             duration_ms = int((time.monotonic() - t0) * 1000)
-            overviews.append(_build_overview(item, (cache_data or {}).get("version", "")))
-            all_rows.extend(state["rows"])
+            _item_results[idx] = (state["rows"], _build_overview(item, (cache_data or {}).get("version", "")))
             src_counts["claude"] += 1
 
             emit({
@@ -181,12 +189,23 @@ async def run(items: list, cache_data=None, on_event=None, concurrency: int = 3,
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
             log.error("%s pipeline error: %s", id_, exc)
+            _item_results[idx] = ([], None)
             src_counts["error"] += 1
             emit({"type": "error", "item": id_, "message": str(exc)[:200]})
 
     # ── Parallel batches ───────────────────────────────────────────────────────
-    for i in range(0, len(items), concurrency):
-        batch = items[i: i + concurrency]
-        await asyncio.gather(*(process_item(it) for it in batch))
+    for batch_start in range(0, len(items), concurrency):
+        batch = items[batch_start: batch_start + concurrency]
+        await asyncio.gather(*(process_item(batch_start + i, it) for i, it in enumerate(batch)))
+
+    # ── Collect results in input order ─────────────────────────────────────────
+    all_rows: list  = []
+    overviews: list = []
+    for res in _item_results:
+        if res is not None:
+            rows, ov = res
+            all_rows.extend(rows)
+            if ov is not None:
+                overviews.append(ov)
 
     return {"rows": all_rows, "overviews": overviews, "src_counts": src_counts}
